@@ -314,11 +314,11 @@ function startServer() {
     }
   });
   
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 🚀 知识管理系统服务器已启动!
 📊 本地访问: http://localhost:${PORT}
-📊 网络访问: http://你的服务器IP:${PORT}
+📊 网络访问: http://0.0.0.0:${PORT} (绑定所有接口)
 📁 数据目录: ${DATA_DIR}
 📄 静态文件: ${PUBLIC_DIR}
 
