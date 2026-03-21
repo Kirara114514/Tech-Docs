@@ -1,0 +1,33 @@
+{
+  "name": "knowledge-system",
+  "version": "1.0.0",
+  "description": "个人知识管理系统 - 灵感捕捉、整理归档、静态网站",
+  "main": "app/server.js",
+  "scripts": {
+    "start": "node app/server.js",
+    "dev": "nodemon app/server.js",
+    "capture": "node app/capture.js",
+    "generate": "node app/generate-static.js",
+    "sync": "node app/git-sync.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "date-fns": "^2.30.0",
+    "express": "^4.18.2",
+    "markdown-it": "^13.0.1",
+    "node-fetch": "^2.7.0",
+    "simple-git": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "knowledge",
+    "notes",
+    "markdown",
+    "git",
+    "static-site"
+  ],
+  "author": "艾米莉 (Emily)",
+  "license": "MIT"
+}
