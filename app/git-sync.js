@@ -169,6 +169,11 @@ public/knowledge.html
       const status = await this.git.status();
       const remotes = await this.git.getRemotes();
       
+      const remoteInfo = remotes.map(r => ({
+        name: r.name,
+        url: r.refs ? r.refs.fetch || r.refs.push : 'unknown'
+      }));
+      
       return {
         initialized: this.isInitialized,
         branch: status.current,
@@ -179,10 +184,7 @@ public/knowledge.html
           unstaged: status.not_added.length + status.modified.length + status.deleted.length + status.created.length,
           conflicted: status.conflicted.length
         },
-        remotes: remotes.map(r => ({
-          name: r.name,
-          url: r.refs.fetch
-        })),
+        remotes: remoteInfo,
         lastSync: this.lastSyncTime
       };
     } catch (error) {
