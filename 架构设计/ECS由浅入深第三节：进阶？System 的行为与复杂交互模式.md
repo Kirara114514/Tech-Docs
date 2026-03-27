@@ -1,3 +1,10 @@
+---
+title: "ECS由浅入深第三节：进阶？System 的行为与复杂交互模式"
+date: "2026-03-28"
+category: "架构设计"
+tags: ["ECS", "GC", "Unity", "内存管理", "性能优化", "架构设计"]
+---
+
 
 在 ECS (Entity-Component-System) 架构中，**System** 是负责所有逻辑处理的地方。它们观察、筛选并操作 **Entity** 的 **Component** 数据，从而驱动整个游戏世界的运转。本篇将深入探讨 System 的运行机制、数据流处理，以及在纯数据驱动的 ECS 环境下如何实现各种复杂的行为和交互。
 

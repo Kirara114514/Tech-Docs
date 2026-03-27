@@ -1,3 +1,10 @@
+---
+title: "响应式编程入门教程第六节：进阶？Combine、Merge、SelectMany 与错误处理"
+date: "2026-03-28"
+category: "响应式编程"
+tags: ["GC", "Unity", "响应式编程", "异步编程", "性能优化", "架构设计"]
+---
+
 
 经过前面几篇的学习，我们已经对 **`ReactiveProperty`**、**`ReactiveCommand`** 和 **`ReactiveCollection`** 有了扎实的理解，也掌握了如何管理订阅生命周期和封装 Unity 事件。现在，我们将进入响应式编程真正展现其强大威力的地方：**高级操作符的组合与转换**。
 

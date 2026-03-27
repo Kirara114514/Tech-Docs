@@ -1,3 +1,10 @@
+---
+title: "响应式编程入门教程第二节：构建 ObservableProperty＜T＞ — 封装 ReactiveProperty 的高级用法"
+date: "2026-03-28"
+category: "响应式编程"
+tags: ["C#", "Unity", "响应式编程", "架构设计"]
+---
+
 
 在上一篇中，我们详细探讨了 UniRx 的核心组件 **`ReactiveProperty<T>`**，了解了它如何让数据变化自动通知订阅者，从而简化了数据绑定和状态管理。`ReactiveProperty<T>` 能够告诉我们“值变了，新值是什么”，这在很多场景下都非常有用。
 

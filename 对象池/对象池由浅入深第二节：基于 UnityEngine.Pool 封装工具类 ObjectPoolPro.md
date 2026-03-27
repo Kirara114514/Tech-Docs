@@ -1,3 +1,10 @@
+---
+title: "对象池由浅入深第二节：基于 UnityEngine.Pool 封装工具类 ObjectPoolPro"
+date: "2026-03-28"
+category: "对象池"
+tags: ["Unity", "内存管理", "对象池", "性能优化"]
+---
+
 
 ### 引言：传统对象复用方式的问题
 

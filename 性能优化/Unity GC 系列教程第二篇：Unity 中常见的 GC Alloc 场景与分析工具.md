@@ -1,3 +1,10 @@
+---
+title: "Unity GC 系列教程第二篇：Unity 中常见的 GC Alloc 场景与分析工具"
+date: "2026-03-28"
+category: "性能优化"
+tags: ["C#", "C++", "GC", "Lua", "Unity", "内存管理", "性能优化", "物理系统"]
+---
+
 
 ## Unity GC 系列教程第二篇：Unity 中常见的 GC Alloc 场景与分析工具
 

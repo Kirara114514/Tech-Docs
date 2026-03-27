@@ -1,3 +1,10 @@
+---
+title: "Unity 中的高性能计算：Job System 与 Burst Compiler 深度解析"
+date: "2026-03-28"
+category: "性能优化"
+tags: ["C#", "ECS", "GC", "Unity", "内存管理", "异步编程", "性能优化", "架构设计", "物理系统"]
+---
+
 
 ## Unity 中的高性能计算：Job System 与 Burst Compiler 深度解析
 
