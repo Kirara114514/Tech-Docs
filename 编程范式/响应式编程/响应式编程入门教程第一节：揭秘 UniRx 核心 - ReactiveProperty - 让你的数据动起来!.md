@@ -1,3 +1,9 @@
+# 响应式编程入门教程第一节：揭秘 UniRx 核心 - ReactiveProperty - 让你的数据动起来!
+
+## 摘要
+[文档核心内容摘要]
+
+## 正文
 
 今天我们来聊聊 Unity 开发中的一个利器：**UniRx**。如果你还在为各种数据变化、事件通知、异步操作的混乱代码而头疼，那么 UniRx 绝对能为你打开一扇新大门。
 
@@ -144,3 +150,14 @@ public class ReactivePropertyInitialValueExample : MonoBehaviour
     
 
 `ReactiveProperty<T>` 是 UniRx 构建响应式系统的重要基石。理解了它，你就迈出了掌握 UniRx 的第一步。在下一篇教程中，我们将基于 `ReactiveProperty<T>`，展示如何进行二次封装，构建一个功能更强大的 `ObservableProperty<T>`，敬请期待！
+
+## 元数据
+- **创建时间：** 2026-04-10
+- **最后更新：** 2026-04-10
+- **作者：** 吉良吉影
+- **分类：** 编程范式/响应式编程
+- **标签：** [相关标签]
+- **状态：** ✅ 完成
+
+---
+*文档由小雅协助整理*
