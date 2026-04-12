@@ -1,0 +1,24 @@
+{
+  "archive_id": "归档01",
+  "topic": "测试专业文档撰写流程",
+  "category": "性能优化",
+  "workspace": "tech",
+  "start_time": "2026-04-10T19:44:45.247514",
+  "structure": [
+    "引言",
+    "流程分析",
+    "技术实现",
+    "总结"
+  ],
+  "completed_parts": [
+    "引言",
+    "流程分析",
+    "技术实现",
+    "总结"
+  ],
+  "current_part": 4,
+  "total_parts": 4,
+  "status": "completed",
+  "last_update": "2026-04-10T19:45:32.565156",
+  "completed_time": "2026-04-10T19:45:32.565156"
+}

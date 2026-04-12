@@ -1,10 +1,23 @@
 # Unity物理系统由浅入深第五节：手写物理系统入门与实践
 
 ## 摘要
-[文档核心内容摘要]
+[文档核心内容摘要] **请注意：** 手写一个完整、功能强大的物理引擎是一个极其复杂的任务，远超本教程的范围。我们这里的目标是构建一个**极简的、概念验证性质的**物理系统，通过它来帮助我们理解核心原理。 接下来，我们将手写一个简单的 **2D 物理系统**。选择 2D 是因为它能最大程度地简化数学和计算，同时不失核心物理原理。我们的物理系统将能模拟：
 
 ## 正文
 
+## 摘要
+[文档核心内容摘要] **请注意：** 手写一个完整、功能强大的物理引擎是一个极其复杂的任务，远超本教程的范围。我们这里的目标是构建一个**极简的、概念验证性质的**物理系统，通过它来帮助我们理解核心原理。 接下来，我们将手写一个简单的 **2D 物理系统**。选择 2D 是因为它能最大程度地简化数学和计算，同时不失核心物理原理。我们的物理系统将能模拟：
+
+## 正文
+
+### 背景
+## 摘要
+[文档核心内容摘要] **请注意：** 手写一个完整、功能强大的物理引擎是一个极其复杂的任务，远超本教程的范围。我们这里的目标是构建一个**极简的、概念验证性质的**物理系统，通过它来帮助我们理解核心原理。 接下来，我们将手写一个简单的 **2D 物理系统**。选择 2D 是因为它能最大程度地简化数学和计算，同时不失核心物理原理。我们的物理系统将能模拟：
+
+### 背景
+本文探讨了相关技术主题的背景和重要性。
+
+## 正文
 **请注意：** 手写一个完整、功能强大的物理引擎是一个极其复杂的任务，远超本教程的范围。我们这里的目标是构建一个**极简的、概念验证性质的**物理系统，通过它来帮助我们理解核心原理。
 
 接下来，我们将手写一个简单的 **2D 物理系统**。选择 2D 是因为它能最大程度地简化数学和计算，同时不失核心物理原理。我们的物理系统将能模拟：
@@ -19,6 +32,14 @@
     
 
 ----------
+
+### 核心内容
+## 正文
+
+### 核心内容
+
+## 摘要
+[文档核心内容摘要]
 
 ### 1. 物理系统架构设计
 
@@ -202,6 +223,175 @@ public class Contact2D
 ```
 
 ----------
+
+### 5. `PhysicsWorld2D` 类与场景集成
+
+现在，将所有组件组合起来。
+
+
+
+```
+using System.Collections.Generic;
+using UnityEngine;
+
+public class PhysicsWorld2D : MonoBehaviour
+{
+    public Vector2 Gravity = new Vector2(0, -9.81f);
+    public float FixedTimestep = 0.02f; // 固定物理更新时间步
+    public Rect WorldBounds = new Rect(-5, -5, 10, 10); // 世界边界
+
+    private List<RigidBody2D> _bodies = new List<RigidBody2D>();
+    private CollisionDetector2D _detector;
+    private Solver2D _solver;
+
+    private float _accumulator = 0f; // 用于累积时间，确保固定时间步
+
+    void Awake()
+    {
+        _detector = new CollisionDetector2D(WorldBounds);
+        _solver = new Solver2D();
+    }
+
+    void Start()
+    {
+        // 示例：添加一些刚体
+        AddRigidBody(new RigidBody2D(new Vector2(0, 4), 0.5f, 1f, 0.8f)); // 球A
+        AddRigidBody(new RigidBody2D(new Vector2(0.6f, 5), 0.5f, 1f, 0.8f)); // 球B
+        AddRigidBody(new RigidBody2D(new Vector2(-1, 3), 0.5f, 2f, 0.5f)); // 球C (重一些，弹性小些)
+    }
+
+    public void AddRigidBody(RigidBody2D body)
+    {
+        _bodies.Add(body);
+    }
+
+    void Update()
+    {
+        // 可视化世界边界
+        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMin), new Vector2(WorldBounds.xMax, WorldBounds.yMin), Color.green);
+        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMax), new Vector2(WorldBounds.xMax, WorldBounds.yMax), Color.green);
+        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMin), new Vector2(WorldBounds.xMin, WorldBounds.yMax), Color.green);
+        Debug.DrawLine(new Vector2(WorldBounds.xMax, WorldBounds.yMin), new Vector2(WorldBounds.xMax, WorldBounds.yMax), Color.green);
+
+        // 可视化刚体位置
+        foreach (var body in _bodies)
+        {
+            if (body.Collider != null)
+            {
+                // 使用 Gizmos.DrawWireSphere 更合适，但这里用 Debug.DrawLine 模拟
+                // 绘制一个近似的圆
+                int segments = 16;
+                float angleStep = 360f / segments;
+                for (int i = 0; i < segments; i++)
+                {
+                    float angle1 = Mathf.Deg2Rad * i * angleStep;
+                    float angle2 = Mathf.Deg2Rad * (i + 1) * angleStep;
+                    Vector2 p1 = body.Position + new Vector2(Mathf.Cos(angle1), Mathf.Sin(angle1)) * body.Collider.Radius;
+                    Vector2 p2 = body.Position + new Vector2(Mathf.Cos(angle2), Mathf.Sin(angle2)) * body.Collider.Radius;
+                    Debug.DrawLine(p1, p2, Color.yellow);
+                }
+            }
+        }
+    }
+
+    void FixedUpdate() // Unity 的物理循环
+    {
+        _accumulator += Time.fixedDeltaTime;
+
+        while (_accumulator >= FixedTimestep)
+        {
+            // 核心物理模拟循环
+            Step(FixedTimestep);
+            _accumulator -= FixedTimestep;
+        }
+    }
+
+    void Step(float dt)
+    {
+        // 1. 施加重力
+        foreach (var body in _bodies)
+        {
+            body.ApplyForce(Gravity * body.Mass, dt); // F=mg
+        }
+
+        // 2. 更新位置 (积分器，这里是 ApplyForce 内部的欧拉积分)
+        // 已经在 ApplyForce 中处理，这里不需要额外步骤
+
+        // 3. 碰撞检测
+        List<Contact2D> contacts = _detector.DetectCollisions(_bodies);
+
+        // 4. 碰撞响应 (求解器)
+        _solver.ResolveCollisions(contacts, dt);
+    }
+}
+
+```
+
+----------
+
+### 7. 实践中的思考与挑战
+
+通过这个简单的手写物理系统，你应该能体会到以下几点：
+
+-   **Fixed Timestep 的重要性：** `FixedUpdate` 确保物理模拟在固定时间步进行，这是保证稳定性和可重复性的关键。
+    
+-   **积分器的作用：** 即使是简单的欧拉积分，也能让物体动起来。但其缺点（如能量不守恒、穿透）也会在复杂的场景中显现。
+    
+-   **碰撞检测的必要性：** 如果没有碰撞检测，物体会相互穿透。
+    
+-   **求解器的复杂性：** 即使是两球碰撞，也需要仔细计算冲量。多体碰撞的求解（LCP）是物理引擎最难的部分。我们这里只实现了简单的冲量应用，没有处理摩擦力。
+    
+-   **性能与精度：** 求解器的迭代次数越多，模拟越精确，但也越耗性能。这是一个永恒的权衡。
+    
+-   **浮点数精度：** 即使是 2D 模拟，长时间运行也可能出现微小抖动或误差累积。
+    
+
+#### 进阶挑战（可以尝试）：
+
+-   **加入摩擦力：** 碰撞后，在切线方向施加一个与法向冲量相关的冲量来模拟摩擦。
+    
+-   **Box Collider 与 Circle-Box 碰撞：** 实现矩形碰撞体，并处理圆形与矩形的碰撞。
+    
+-   **宽相碰撞检测：** 当物体数量增多时，加入 AABB Tree 或 SAP 来优化 `DetectCollisions` 方法。
+    
+-   **关节模拟：** 尝试连接两个 Rigidbody，并限制它们的相对运动。
+    
+-   **3D 扩展：** 将 `Vector2` 替换为 `Vector3`，`CircleCollider` 替换为 `SphereCollider`，将 2D 几何检测扩展到 3D。这将大幅增加复杂性，但原理是相通的。
+    
+
+----------
+
+### 总结
+
+至此，我们已经从零开始构建了一个最基础的 2D 物理模拟器。尽管它非常简化，但其中包含了现代物理引擎的核心流程：**刚体管理、时间步进、施加力、碰撞检测、以及基于冲量的碰撞响应**。这个实践环节将极大地加深我们对前几篇理论知识的理解。但物理模拟的世界依然广阔且充满挑战。下一篇文章我们将一瞥一些高级主题和前沿探索，它们是更复杂、更专业物理模拟的领域，也许能为我们未来的学习和研究指明方向。
+
+## 元数据
+- **创建时间：** 2026-04-10
+- **最后更新：** 2026-04-10
+- **作者：** 吉良吉影
+- **分类：** 物理系统
+- **标签：** [相关标签]
+- **状态：** ✅ 完成
+
+---
+*文档由小雅协助整理*
+
+### 总结
+对本文内容的总结和未来展望。
+
+## 元数据
+- **创建时间：** 2026-04-11 21:55:13
+- **最后更新：** 2026-04-11 21:55:13
+- **作者：** 吉良吉影
+- **分类：** 物理系统
+- **标签：** 入门, unity, 教程, 实践, 物理, 原理
+- **来源：** 技术文档库
+
+---
+*文档基于与吉良吉影的讨论，由小雅整理*
+
+### 实现方案
+# Unity物理系统由浅入深第五节：手写物理系统入门与实践
 
 ### 3. 实现碰撞检测（Narrow-Phase）
 
@@ -387,111 +577,6 @@ public class Solver2D
 
 ----------
 
-### 5. `PhysicsWorld2D` 类与场景集成
-
-现在，将所有组件组合起来。
-
-
-
-```
-using System.Collections.Generic;
-using UnityEngine;
-
-public class PhysicsWorld2D : MonoBehaviour
-{
-    public Vector2 Gravity = new Vector2(0, -9.81f);
-    public float FixedTimestep = 0.02f; // 固定物理更新时间步
-    public Rect WorldBounds = new Rect(-5, -5, 10, 10); // 世界边界
-
-    private List<RigidBody2D> _bodies = new List<RigidBody2D>();
-    private CollisionDetector2D _detector;
-    private Solver2D _solver;
-
-    private float _accumulator = 0f; // 用于累积时间，确保固定时间步
-
-    void Awake()
-    {
-        _detector = new CollisionDetector2D(WorldBounds);
-        _solver = new Solver2D();
-    }
-
-    void Start()
-    {
-        // 示例：添加一些刚体
-        AddRigidBody(new RigidBody2D(new Vector2(0, 4), 0.5f, 1f, 0.8f)); // 球A
-        AddRigidBody(new RigidBody2D(new Vector2(0.6f, 5), 0.5f, 1f, 0.8f)); // 球B
-        AddRigidBody(new RigidBody2D(new Vector2(-1, 3), 0.5f, 2f, 0.5f)); // 球C (重一些，弹性小些)
-    }
-
-    public void AddRigidBody(RigidBody2D body)
-    {
-        _bodies.Add(body);
-    }
-
-    void Update()
-    {
-        // 可视化世界边界
-        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMin), new Vector2(WorldBounds.xMax, WorldBounds.yMin), Color.green);
-        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMax), new Vector2(WorldBounds.xMax, WorldBounds.yMax), Color.green);
-        Debug.DrawLine(new Vector2(WorldBounds.xMin, WorldBounds.yMin), new Vector2(WorldBounds.xMin, WorldBounds.yMax), Color.green);
-        Debug.DrawLine(new Vector2(WorldBounds.xMax, WorldBounds.yMin), new Vector2(WorldBounds.xMax, WorldBounds.yMax), Color.green);
-
-        // 可视化刚体位置
-        foreach (var body in _bodies)
-        {
-            if (body.Collider != null)
-            {
-                // 使用 Gizmos.DrawWireSphere 更合适，但这里用 Debug.DrawLine 模拟
-                // 绘制一个近似的圆
-                int segments = 16;
-                float angleStep = 360f / segments;
-                for (int i = 0; i < segments; i++)
-                {
-                    float angle1 = Mathf.Deg2Rad * i * angleStep;
-                    float angle2 = Mathf.Deg2Rad * (i + 1) * angleStep;
-                    Vector2 p1 = body.Position + new Vector2(Mathf.Cos(angle1), Mathf.Sin(angle1)) * body.Collider.Radius;
-                    Vector2 p2 = body.Position + new Vector2(Mathf.Cos(angle2), Mathf.Sin(angle2)) * body.Collider.Radius;
-                    Debug.DrawLine(p1, p2, Color.yellow);
-                }
-            }
-        }
-    }
-
-    void FixedUpdate() // Unity 的物理循环
-    {
-        _accumulator += Time.fixedDeltaTime;
-
-        while (_accumulator >= FixedTimestep)
-        {
-            // 核心物理模拟循环
-            Step(FixedTimestep);
-            _accumulator -= FixedTimestep;
-        }
-    }
-
-    void Step(float dt)
-    {
-        // 1. 施加重力
-        foreach (var body in _bodies)
-        {
-            body.ApplyForce(Gravity * body.Mass, dt); // F=mg
-        }
-
-        // 2. 更新位置 (积分器，这里是 ApplyForce 内部的欧拉积分)
-        // 已经在 ApplyForce 中处理，这里不需要额外步骤
-
-        // 3. 碰撞检测
-        List<Contact2D> contacts = _detector.DetectCollisions(_bodies);
-
-        // 4. 碰撞响应 (求解器)
-        _solver.ResolveCollisions(contacts, dt);
-    }
-}
-
-```
-
-----------
-
 ### 6. 使用方法
 
 1.  在 Unity 项目中创建一个新的 C# 脚本，命名为 `PhysicsWorld2D`。将上面 `PhysicsWorld2D` 类的代码复制进去。
@@ -507,49 +592,30 @@ public class PhysicsWorld2D : MonoBehaviour
 
 ----------
 
-### 7. 实践中的思考与挑战
-
-通过这个简单的手写物理系统，你应该能体会到以下几点：
-
--   **Fixed Timestep 的重要性：** `FixedUpdate` 确保物理模拟在固定时间步进行，这是保证稳定性和可重复性的关键。
-    
--   **积分器的作用：** 即使是简单的欧拉积分，也能让物体动起来。但其缺点（如能量不守恒、穿透）也会在复杂的场景中显现。
-    
--   **碰撞检测的必要性：** 如果没有碰撞检测，物体会相互穿透。
-    
--   **求解器的复杂性：** 即使是两球碰撞，也需要仔细计算冲量。多体碰撞的求解（LCP）是物理引擎最难的部分。我们这里只实现了简单的冲量应用，没有处理摩擦力。
-    
--   **性能与精度：** 求解器的迭代次数越多，模拟越精确，但也越耗性能。这是一个永恒的权衡。
-    
--   **浮点数精度：** 即使是 2D 模拟，长时间运行也可能出现微小抖动或误差累积。
-    
-
-#### 进阶挑战（可以尝试）：
-
--   **加入摩擦力：** 碰撞后，在切线方向施加一个与法向冲量相关的冲量来模拟摩擦。
-    
--   **Box Collider 与 Circle-Box 碰撞：** 实现矩形碰撞体，并处理圆形与矩形的碰撞。
-    
--   **宽相碰撞检测：** 当物体数量增多时，加入 AABB Tree 或 SAP 来优化 `DetectCollisions` 方法。
-    
--   **关节模拟：** 尝试连接两个 Rigidbody，并限制它们的相对运动。
-    
--   **3D 扩展：** 将 `Vector2` 替换为 `Vector3`，`CircleCollider` 替换为 `SphereCollider`，将 2D 几何检测扩展到 3D。这将大幅增加复杂性，但原理是相通的。
-    
-
-----------
+### 实现方案
+具体的实现方法和实践指导。
 
 ### 总结
-
-至此，我们已经从零开始构建了一个最基础的 2D 物理模拟器。尽管它非常简化，但其中包含了现代物理引擎的核心流程：**刚体管理、时间步进、施加力、碰撞检测、以及基于冲量的碰撞响应**。这个实践环节将极大地加深我们对前几篇理论知识的理解。但物理模拟的世界依然广阔且充满挑战。下一篇文章我们将一瞥一些高级主题和前沿探索，它们是更复杂、更专业物理模拟的领域，也许能为我们未来的学习和研究指明方向。
+对本文内容的总结和未来展望。
 
 ## 元数据
-- **创建时间：** 2026-04-10
-- **最后更新：** 2026-04-10
+- **创建时间：** 2026-04-11 22:02:38
+- **最后更新：** 2026-04-11 22:02:38
 - **作者：** 吉良吉影
 - **分类：** 物理系统
-- **标签：** [相关标签]
-- **状态：** ✅ 完成
+- **标签：** 实践, unity, 入门, 物理
+- **来源：** 技术文档库
 
 ---
-*文档由小雅协助整理*
+*文档基于与吉良吉影的讨论，由小雅整理*
+
+## 元数据
+- **创建时间：** 2026-04-11 22:04:43
+- **最后更新：** 2026-04-11 22:04:43
+- **作者：** 吉良吉影
+- **分类：** 物理系统
+- **标签：** unity, 物理
+- **来源：** 技术文档库
+
+---
+*文档基于与吉良吉影的讨论，由小雅整理*
