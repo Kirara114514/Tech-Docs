@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本文重写《Unity 多线程编程与线程安全》，移除原文中重复的引言、重复结尾和示例堆叠，将内容整理为一篇面向 Unity 工业化开发的多线程基础与线程安全文档。文章从 Unity 主线程限制、Task.Run 与线程池、SynchronizationContext、UniTask 线程切换、共享数据风险、锁、原子操作、并发集合、不可变快照、主线程调度器、取消、异常、死锁、测试与验收等角度展开。目标是让开发者理解：多线程不是“把代码丢到后台”这么简单，而是围绕数据边界、生命周期、线程安全和回主线程应用结果建立完整规范。
+Unity 多线程编程的核心不是把代码丢到后台执行，而是围绕数据边界、生命周期、线程安全和主线程回写建立完整规范。协程和大多数 PlayerLoop 型 UniTask 等待仍运行在主线程；只有显式切到线程池、使用 Task.Run、创建 Thread 或调度 Job，才涉及真正的后台执行。正式项目中，多线程应从 Unity 主线程限制、纯数据快照、共享状态治理、锁与原子操作、主线程调度器、取消、异常、死锁、平台差异和验收指标出发设计。
 
 ## 正文
 
@@ -10,9 +10,9 @@
 
 协程和 UniTask 能处理很多异步流程，但它们并不等同于多线程。协程运行在 Unity 主线程，UniTask 的 PlayerLoop 等待也常用于主线程异步；只有显式切到线程池、使用 Task.Run、创建 Thread、使用 Job System，才涉及真正的后台执行。随着项目中出现大 JSON 解析、资源包解压、寻路预计算、日志压缩、文件读写、网络数据处理等耗时任务，开发者会自然想到多线程。
 
-原文对多线程概念、Task.Run、线程安全、lock、Interlocked 和 ConcurrentQueue 做了基础介绍，但存在大量重复段落，而且对 Unity 主线程限制和工程边界还可以更深入。本文将补足这些内容，强调“线程安全不是只加锁”，更重要的是减少共享可变状态、使用数据快照、明确主线程回写、建立调度器和取消流程。
+工程中的线程安全不是只加锁。锁、Interlocked 和 ConcurrentQueue 都只是局部工具，更重要的是减少共享可变状态、使用不可变快照、明确主线程回写、建立调度器、限制并发、支持取消并记录异常上下文。多线程一旦缺少这些边界，就会把偶发问题推迟到场景切换、弱网、低端机、对象销毁和任务积压时暴露。
 
-### 核心内容
+### 核心原理
 
 #### 1. Unity 为什么强调主线程
 
@@ -117,7 +117,7 @@ public async UniTask<Config> LoadConfigAsync(string path, CancellationToken toke
     await UniTask.SwitchToThreadPool();
 
     string json = File.ReadAllText(path);
-    Config config = JsonUtility.FromJson<Config>(json);
+    Config config = ConfigJsonParser.Parse(json);
 
     await UniTask.SwitchToMainThread();
     token.ThrowIfCancellationRequested();
@@ -126,7 +126,7 @@ public async UniTask<Config> LoadConfigAsync(string path, CancellationToken toke
 }
 ```
 
-这段代码仍然需要遵守原则：后台阶段只处理纯 C# 数据；主线程阶段才访问 Unity API。UniTask 简化了语法，但没有消除线程安全边界。
+这段代码仍然需要遵守原则：后台阶段只处理纯 C# 数据，并使用线程安全的解析器；主线程阶段才访问 Unity API。UniTask 简化了语法，但没有消除线程安全边界。
 
 #### 5. 竞态条件
 
@@ -262,7 +262,7 @@ public async Task ParseAsync(string text, CancellationToken token)
 
 C# 多线程适合复杂控制流、IO 和普通纯 C# 逻辑；Job System 适合大量数据并行、连续内存和 Burst 可优化的计算。不要用 Task.Run 处理上万实体每帧的数值循环；不要用 Job System 等待网络请求。工具选择应基于任务类型。
 
-### 实现方案
+### 设计思路
 
 #### 1. 主线程调度器模板
 
@@ -375,13 +375,7 @@ public async UniTask UpdateAiAsync(List<Enemy> enemies, CancellationToken token)
 - 是否需要用 Job System 替代 Task.Run？
 - 是否在目标平台验证线程支持？
 
-### 总结
-
-Unity 多线程的核心不是“多开几个线程”，而是建立清晰的数据边界。主线程负责 Unity 对象访问，后台线程负责纯数据处理；共享状态越少，线程安全问题越少；结果必须通过明确的主线程回写路径应用。`lock`、`Interlocked`、Concurrent 集合只是工具，不是架构本身。
-
-在工业化项目中，多线程代码必须配套取消、异常、日志、调度预算、压力测试和平台验证。简单 IO 和纯 C# 计算可以使用 Task 或 UniTask 线程池；大量数据并行计算应考虑 Job System 和 Burst。只要团队坚持“快照输入、后台计算、主线程回写、生命周期可取消”的原则，多线程就能成为提升性能的工具，而不是偶发 bug 的来源。
-
-
+### 进阶讨论
 #### 附录 A：线程安全测试建议
 
 多线程问题往往在正常流程中不稳定复现，因此测试应主动制造竞争。可以增加并发次数、随机 Sleep、快速取消、重复场景切换、并行读写同一个 key、主线程回调积压等场景。对调度器要测试单帧大量投递；对缓存要测试并发读写；对取消要测试任务开始前、运行中、回写前不同阶段取消。
@@ -620,15 +614,20 @@ public async UniTask RunAsync(Owner owner, CancellationToken token)
 
 多线程优化应至少记录以下指标：主线程耗时是否下降，后台任务耗时是否可接受，回调峰值是否造成 spike，GC Alloc 是否增加，取消后是否仍写回，异常是否可追踪，低端机温度和功耗是否恶化。某些优化在编辑器里看起来变快，但真机上因为线程调度和功耗限制收益很小，所以必须在目标设备验证。
 
+### 总结
+Unity 多线程的核心不是“多开几个线程”，而是建立清晰的数据边界。主线程负责 Unity 对象访问，后台线程负责纯数据处理；共享状态越少，线程安全问题越少；结果必须通过明确的主线程回写路径应用。`lock`、`Interlocked`、Concurrent 集合只是工具，不是架构本身。
+
+在工业化项目中，多线程代码必须配套取消、异常、日志、调度预算、压力测试和平台验证。简单 IO 和纯 C# 计算可以使用 Task 或 UniTask 线程池；大量数据并行计算应考虑 Job System 和 Burst。只要团队坚持“快照输入、后台计算、主线程回写、生命周期可取消”的原则，多线程就能成为提升性能的工具，而不是偶发 bug 的来源。
+
 ## 元数据
 
 - **创建时间：** 2026-04-24
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
+- **最后更新：** 2026-05-08 00:00
+- **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity、多线程、Task、线程安全、lock、Interlocked、ConcurrentQueue
-- **来源：** 已有文稿整理、官方文档校正、工程化经验重写
+- **标签：** Unity, 多线程, Task, 线程安全, lock, Interlocked, ConcurrentQueue
+- **来源简注：** 基于 Unity 多线程编程与线程安全主题重新编写，聚焦主线程限制、数据快照、同步机制、调度器、取消异常和平台验收。
 
 ---
 
-*文档基于与吉良吉影的讨论，由小雅整理*
+*文档基于讨论主题重写整理*

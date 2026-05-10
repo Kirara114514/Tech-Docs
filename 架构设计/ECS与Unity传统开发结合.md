@@ -1,162 +1,174 @@
 # ECS与Unity传统开发结合
 
 ## 摘要
-完全摒弃 GameObject 和 MonoBehaviour 去使用 ECS 在现实中往往不可行。本文提出混合架构策略——以 ECS 作为核心逻辑层处理大量实体的数据计算，以 GameObject 作为表现层负责渲染、动画、UI 等 Unity 原生功能，并介绍 HybridECS Component、ConvertToEntity 和组件数据同步等桥接技术。
+ECS 与 Unity 传统 GameObject/MonoBehaviour 开发并不是非此即彼的替代关系。对真实项目而言，最稳定的选择通常不是把所有对象都改造成纯 ECS，也不是完全停留在传统面向对象脚本体系中，而是依据数据规模、更新频率、引擎功能依赖、团队工具链和调试成本划分边界：让 ECS 承担高频、大规模、规则明确的数据计算，让 GameObject 体系继续承担场景编辑、动画、UI、粒子、物理集成、第三方插件和内容生产协作。本文从架构层讨论混合模式成立的原因、核心原则、同步边界、现代 Entities Baking 流程、数据所有权、性能风险、迁移策略和验收标准，目标不是给出一组 API 示例，而是建立一套可在项目中长期演进的混合架构判断框架。
 
 ## 正文
 
 ### 背景
-Unity 的 UI 系统、Mecanim 动画、粒子系统、物理引擎乃至编辑器扩展都深度依赖于 GameObject。混合模式不是妥协，而是务实的架构选择——在性能关键区域用 ECS，在需要引擎集成的区域保留 GameObject。
+Unity 中的 ECS 常常被误解为一种“取代 GameObject 的新开发方式”。这种理解在概念传播阶段很有吸引力，因为它把问题简化成了性能新范式与传统组件模型之间的对抗；但在真正的产品工程中，事情远比这个叙事复杂。GameObject/MonoBehaviour 体系承载的不只是脚本挂载方式，还包括场景编辑、Prefab 工作流、动画系统、Timeline、粒子系统、UI、物理组件、可视化调试、资源生产流程、插件生态和团队协作习惯。它是 Unity 内容生产链的一部分，而不是单纯的运行时数据结构。
 
-### 何时采用混合模式？
+ECS 的价值也并不在于“更现代”或“更底层”，而在于它把数据布局、批量访问、并行调度和系统化更新顺序放到了架构中心。对大量同质实体、规则明确的模拟、可并行的状态更新和高频数据转换而言，ECS 能显著降低对象分散、虚调用、托管分配和缓存不友好的成本。它尤其适合单位群移动、弹幕、状态机批处理、感知筛选、轻量碰撞预筛、Buff 批量更新、寻路中间结果处理和大规模表现数据驱动。
 
-| 场景 | 策略 | 原因 |
-|------|------|------|
-| UI 系统 | 保留 GameObject | UGUI/UIToolkit 基于 MB，ECS 重建 UI 成本过高 |
-| 复杂动画 | 保留 GameObject | Mecanim 成熟稳定，ECS 动画系统成本极高 |
-| 粒子系统 | 保留 GameObject | 原生粒子系统更优 |
-| 第三方插件 | 保留 GameObject | 绝大多数插件为 GameObject 设计 |
-| 物理引擎 | 可选 | 非 DOTS 物理依赖 GameObject；DOTS Physics 纯 ECS |
-| **大量实体逻辑** | **ECS** | 上万个单位的移动、AI、碰撞计算 |
+真正的问题是：项目中很少只有一种对象。玩家角色、Boss、UI、剧情演出、复杂动画、粒子特效、资源挂点、技能表现和第三方 SDK 往往同时存在。它们对性能、可编辑性、可调试性和工具链的要求不同。若为了“纯 ECS”而重建所有引擎能力，团队会付出极高的工具成本；若为了保留熟悉工作流而拒绝 ECS，大规模数据系统又会被传统对象模型拖住。混合架构正是在这两种极端之间建立工程边界：不是让两套体系互相污染，而是让它们各自在最合适的位置工作。
 
-### 混合架构的核心模式
+### 核心原理
+#### 一、混合架构的核心不是“同时使用两套技术”，而是划清所有权
+混合架构最常见的失败方式，是把 ECS 和 GameObject 都当成同一份状态的主人。一个角色位置既由 ECS System 推进，又被 MonoBehaviour 在 `Update` 中修改；一个生命值既存在 `IComponentData` 中，又存在 UI 脚本字段里；一个技能状态既由数据系统切换，又被表现层脚本临时覆盖。表面上看，这只是“同步一下”，实际上已经破坏了架构边界。只要所有权不清晰，任何同步策略都会变成补丁。
 
-#### 模式一：ECS 计算 → GameObject 渲染
+因此，混合模式的第一原则是确定每类状态的权威来源。大规模逻辑状态若进入 ECS，就应由 ECS 成为逻辑真值；GameObject 层只消费该状态生成表现，或通过明确的输入事件把外部信息送回 ECS。反过来，若某个对象由动画、物理或复杂交互主导，GameObject 可以保留权威状态，ECS 只读取其抽象后的轻量数据参与批量计算。混合架构不是双向自由访问，而是有限、明确、可审计的数据交换。
 
-最适合大量单位的场景（RTS、割草、弹幕游戏）。
+#### 二、ECS 适合处理规则明确的大规模数据，不适合替代所有引擎功能
+ECS 的优势来自数据导向。它最擅长的不是少量复杂对象，而是大量结构相似、访问模式稳定、更新规则可批处理的数据。一个 RTS 中上万单位的移动和目标筛选，一个弹幕游戏中成千上万投射物的生命周期，一个开放场景中大量简单感知点的距离检测，都很适合 ECS。因为这些任务关心的是同类数据的连续访问、并行调度和低分配更新。
 
-```csharp
-// ECS 侧：纯数据
-struct UnitPosition : IComponentData { public float3 Value; }
+但 UI、复杂动画状态机、带大量编辑器语义的关卡对象、粒子系统、第三方插件和强依赖 Unity 组件生命周期的功能，并不天然适合被重写成 ECS。它们的主要成本通常不在纯数据计算，而在内容生产、调参、可视化、事件交互和工具链成熟度。若强行 ECS 化，可能会把运行时性能问题变成生产效率问题。架构设计必须承认：性能不是唯一指标，团队能否稳定生产和调试同样重要。
 
-// 桥接 System：将 ECS 数据同步到 Transform
-class TransformSyncSystem : SystemBase
-{
-    protected override void OnUpdate()
-    {
-        Entities.ForEach((in UnitPosition pos, in TransformGO go) => {
-            go.Transform.position = pos.Value;
-        }).Schedule();
-    }
-}
-```
+#### 三、GameObject 层在混合架构中不应被视为“遗留层”，而应被视为表现与工具层
+很多混合架构失败，来自对 GameObject 层的态度不清。若把它视为即将被替换的残留物，团队就不会认真设计它与 ECS 的接口；若把它视为表现与工具层，边界就会清楚得多。GameObject 可以负责可见对象、Animator、VFX、UI、交互触发、场景编辑和调试 Gizmo；ECS 可以负责隐藏在背后的大规模状态计算。两者不是主次关系，而是职责不同。
 
-#### 模式二：GameObject 驱动 ECS
+这种定位能避免很多误判。例如血条 UI 不必成为 ECS 实体本身，它可以是 GameObject 表现对象，订阅或拉取 ECS 中的生命状态；角色动画也不必完全 ECS 化，它可以消费 ECS 输出的速度、朝向、状态标签，然后由 Animator 表现；技能命中可以由 ECS 批量预筛，再把结果传给表现层播放特效。只要表现层不反向成为逻辑真值，GameObject 的存在不会削弱 ECS 的价值。
 
-适合 Boss、玩家角色等较少但逻辑复杂的对象。
+#### 四、现代 Unity ECS 的 Authoring 流程应以 Baking 为核心，而不是继续依赖旧转换接口
+早期 DOTS 文档中常见 `ConvertToEntity`、`IConvertGameObjectToEntity`、`GameObjectConversionSystem` 等概念，但现代 Entities 工作流已经转向 Authoring + Baker。也就是说，编辑器中的 GameObject/MonoBehaviour 主要作为创作数据载体，Baker 在构建或进入运行时世界时把它们转成 ECS 数据。这个变化非常重要，因为它把“编辑器对象”和“运行时实体”分离得更清楚。
 
-```csharp
-public class PlayerAuthoring : MonoBehaviour, IConvertGameObjectToEntity
-{
-    public float MoveSpeed = 5f;
-    
-    public void Convert(Entity entity, EntityManager manager, 
-                        GameObjectConversionSystem conversionSystem)
-    {
-        manager.AddComponentData(entity, new PlayerInput());
-        manager.AddComponentData(entity, new MoveSpeed { Value = MoveSpeed });
-        manager.AddComponentData(entity, new Position());
-    }
-}
-```
+在正式项目中，应把旧转换接口理解为历史语境或老项目迁移点，而不是新项目默认方案。新的混合架构更应围绕 Authoring 组件、Baker、BlobAsset、SubScene、EntityPrefab、Baking 依赖和运行时实例化来设计。这样既保留了 Unity 编辑器工作流，又能让运行时 ECS 数据保持紧凑、明确和可批量处理。
 
-#### 模式三：Hybrid ECS Component
+#### 五、同步不是混合架构的细节，而是架构成本中心
+混合架构真正贵的地方，往往不是 ECS System 本身，也不是 GameObject 脚本本身，而是两者之间频繁、无序、双向的同步。每帧把大量 ECS 位置写回 Transform，每帧从大量 MonoBehaviour 抽取状态进入 Entity，每个 UI 控件都直接访问 ECS 查询，每个表现脚本又临时写回逻辑数据，这些都会让混合架构变成两套系统的最坏组合。
 
-ECS Component 持有 GameObject 引用，适用于低频同步。
+同步必须被当作一等设计对象：哪些数据每帧同步，哪些数据事件同步，哪些数据只在创建时 Bake，哪些数据由表现层缓存，哪些数据只允许单向流动，哪些数据需要延迟一帧，哪些数据允许最终一致。只要同步策略没有被正式设计，混合模式就会在项目规模变大后迅速失控。
 
-```csharp
-struct HealthBarLink : IComponentData
-{
-    public Entity LinkedEntity;    // ECS Entity
-    public Slider UIHealthBar;     // GameObject 引用
-}
+#### 六、单向数据流比双向同步更容易长期维护
+在大多数混合架构中，最稳妥的模式是单向数据流。ECS 负责逻辑状态，GameObject 负责表现消费；外部输入、碰撞回调或 UI 操作通过事件或命令进入 ECS，而不是直接改 ECS 状态。这样做的好处是链路可追踪，调试时可以清楚知道状态从哪里来、什么时候被消费、为什么发生变化。
 
-class HealthBarSyncSystem : SystemBase
-{
-    protected override void OnUpdate()
-    {
-        Entities.ForEach((in Health h, in HealthBarLink link) => {
-            link.UIHealthBar.value = h.Value / h.MaxValue;
-        }).Schedule();
-    }
-}
-```
+双向同步并非绝对不能用，但必须极其谨慎。双向状态最容易产生乒乓更新：ECS 写 Transform，MonoBehaviour 下一帧又读 Transform 写回 ECS；ECS 改生命值，UI 脚本修正显示值时又误写逻辑；动画根运动写位置，ECS 移动系统又覆盖位置。只要出现这类回路，系统表现会变得难以预测。双向同步必须有明确优先级、阶段顺序和冲突规则。
 
-**注意**：GameObject 引用在 ECS 的 Job System 中不能并行访问（非线程安全），这种模式只适合在主线程运行的 System。
+#### 七、混合模式的性能收益取决于边界是否稳定，而不只取决于是否使用 ECS
+把一个系统改成 ECS，并不会自动获得性能收益。若 ECS 计算之后仍然要对每个实体逐个访问 GameObject、逐个操作 Transform、逐个触发托管事件，缓存友好和并行计算的收益会被同步成本抵消。相反，如果 GameObject 层只保留必要表现对象，而大部分同质数据在 ECS 内部完成批量更新，性能收益才会真正出现。
 
-### 组件数据同步
+因此，评估混合架构时不能只看“某个模块是不是 ECS”。更重要的问题是：数据是否连续，系统是否可并行，托管引用是否被隔离，主线程同步是否可控，Transform 写入是否被降频，表现对象数量是否合理，逻辑结果是否可以批量传递。ECS 是工具，边界设计才是收益来源。
 
-混合架构的核心挑战：**ECS 数据（NativeContainer）↔ GameObject 数据（托管对象）**。
+#### 八、混合架构会增加调试维度，因此必须提前建设可观察性
+传统 GameObject 调试通常可以在 Inspector 中直接看组件字段；ECS 调试则需要观察 Entity、Archetype、Chunk、System 更新顺序、查询结果和 Job 调度。混合架构把两者叠加在一起，如果没有工具支持，问题会很快变得不可解释。一个状态到底在 Authoring、Baking、运行时 Entity、表现对象还是同步缓存中出错，必须能够被定位。
 
-**同步方向**：
-- **ECS → GameObject**（大量单位位置同步）→ TransformSyncSystem
-- **GameObject → ECS**（玩家输入、碰撞事件）→ 使用 `ComponentSystemGroup` 在同步 System 中处理
-- **双向**（生命值、状态变化）→ 谨慎设计，避免乒乓同步
+成熟的混合架构应提供几类可观察入口：实体与表现对象的映射关系、关键数据同步日志、System 更新顺序、Baker 输出检查、Transform 同步计数、主线程桥接耗时、事件队列长度和异常回写检测。没有这些入口，混合模式在早期看起来灵活，后期会非常难维护。
 
-**同步策略对比**：
+#### 九、Baking 解决的是创作到运行时数据的转换，不解决运行时所有同步问题
+Baking 很容易被误解为“有了转换流程就完成混合架构”。实际上，Baking 只解决编辑器创作数据如何进入 ECS 世界的问题。运行时对象生成、动态状态变化、UI 表现、动画输出、物理回调、网络同步和特效播放仍然需要明确的数据交换策略。也就是说，Baking 是入口，不是全部桥接层。
 
-| 策略 | 性能 | 开发成本 | 延迟 | 适用 |
-|------|------|---------|------|------|
-| 每帧同步 | 低 | 低 | 0 | 位置、旋转 |
-| 事件触发同步 | 高 | 中 | 1帧 | 生命值更新 |
-| 定时同步 | 可配置 | 中 | 可控 | 不需要实时更新 |
-| 差分同步 | 最高 | 高 | 1帧 | 网络同步 |
+例如一个敌人 Prefab 可以通过 Baker 生成 ECS 初始数据，但运行时它是否需要 GameObject 表现、表现对象何时生成、动画参数如何从 ECS 状态映射、死亡特效由谁触发、UI 血条如何绑定，这些仍需要架构设计。混合模式真正困难的地方，正是在这些运行时边界上。
 
-```csharp
-// 事件触发同步
-struct HealthChangedEvent : IComponentData { public float OldValue; public float NewValue; }
+#### 十、托管对象引用进入 ECS 世界时必须非常克制
+ECS 的数据优势依赖结构化、紧凑和可并行的数据布局。若大量 `IComponentData` 持有托管对象引用、UnityEngine.Object、UI 组件或复杂对象指针，系统很容易退回主线程、失去 Burst 和 Jobs 的优势。托管引用并非绝对禁止，但它应被限制在桥接组件、表现层索引或低频管理系统中，而不应进入核心高频计算路径。
 
-class HealthBarSystem : SystemBase
-{
-    protected override void OnUpdate()
-    {
-        Entities.ForEach((Entity e, in HealthChangedEvent evt, in HealthBarLink link) => {
-            link.UIHealthBar.value = evt.NewValue / 100f;
-            EntityManager.RemoveComponent<HealthChangedEvent>(e); // 处理后清除
-        }).WithStructuralChanges().Run(); // 结构变更需在主线程
-    }
-}
-```
+更稳妥的方式是用 Entity、索引、ID、BlobAsset 引用、轻量句柄或事件来表达关系，把真正的 Unity 对象留在表现层管理。这样 ECS 核心仍保持数据导向，而 GameObject 层可以通过映射表完成必要交互。
 
-### ConvertToEntity 与 Authoring
+#### 十一、混合架构的更新顺序必须显式设计
+GameObject 的 `Update/LateUpdate/FixedUpdate` 与 ECS 的 SystemGroup、Simulation/Presentation 阶段并不是天然对齐的。若一个系统在错误阶段读取未同步数据，就会出现一帧延迟、状态抖动、动画滞后或表现覆盖逻辑的问题。因此，混合架构必须明确每帧的阶段顺序：输入何时采集，ECS 何时模拟，物理何时反馈，表现何时消费，Transform 何时写入，UI 何时刷新。
 
-Unity DOTS 提供 `ConvertToEntity` 机制，使得 GameObject 在进入 Play 模式时自动转换为 ECS Entity。
+很多混合模式 bug 表面是“偶发不同步”，本质是更新时序没有被设计。只要时序明确，延迟即使存在也可以被解释和接受；若时序隐式，团队会不断用临时刷新和强制同步掩盖问题。
 
-```csharp
-[RequiresEntityConversion]
-public class BulletAuthoring : MonoBehaviour, IConvertGameObjectToEntity
-{
-    public float Speed = 20f;
-    
-    public void Convert(Entity entity, EntityManager manager, 
-                        GameObjectConversionSystem system)
-    {
-        manager.AddComponentData(entity, new Velocity { Value = Speed * transform.forward });
-        manager.AddComponentData(entity, new Lifetime { Remaining = 3f });
-    }
-}
-```
+#### 十二、混合模式不是迁移终点，而是一种可演进架构
+项目早期可以先保留大部分 GameObject，只把最明显的大规模数据系统移入 ECS；中期可以把更多纯数据逻辑抽离；后期若某些表现层仍成为瓶颈，再考虑更深层的 ECS 化或批量渲染。反过来，如果某些 ECS 化模块带来过高工具成本，也可以回退到传统体系。混合架构的价值就在于它允许分阶段演进，而不是一次性押注。
 
-**转换模式**：
-- **Convert To Entity and Destroy**：运行时删除 GameObject，纯 ECS
-- **Convert To Entity**：保留 GameObject，用于同步模式
+因此，设计时不应只考虑当前版本，还要考虑迁移路径。哪些数据未来可能纯 ECS 化，哪些模块长期保留 GameObject，哪些接口要保持中立，哪些 Authoring 数据应避免绑定运行时实现，这些都会影响架构寿命。
 
-### 实现方案
-1. **从少量实体开始**：先在非关键系统尝试混合模式，验证后再扩展
-2. **定位性能瓶颈**：用 Profiler 找出哪些 System 在 GameObject → ECS 同步上消耗过多
-3. **同步降频**：不重要的视觉效果（浮动文字、粒子）降低同步频率
-4. **Authoring 优先**：所有 ECS 数据尽量通过 Authoring 脚本配置，减少运行时转换
+### 设计思路
+#### 一、先按“规模、频率、规则明确度”划分系统
+判断一个模块是否进入 ECS，优先看三个条件：对象数量是否足够大，更新频率是否足够高，规则是否足够统一。三者都成立，ECS 通常很合适；只有少量复杂对象，传统 GameObject 往往更经济；数量大但规则高度差异化，则需要先抽象数据模型，不宜仓促迁移。
+
+例如大量投射物、轻量单位移动、Buff 计时、简单感知筛选适合 ECS；主角控制、Boss 复杂动画、强交互机关、UI 控件、剧情演出则更适合保留 GameObject 或采用局部数据桥接。这个判断应写入项目规范，而不是每个模块临时争论。
+
+#### 二、定义逻辑真值层和表现消费层
+混合架构中最重要的图不是类图，而是数据流图。每个关键状态都应标明权威位置：位置、速度、生命值、状态标签、动画参数、输入命令、命中结果、表现触发事件分别在哪里产生，在哪里消费，是否允许回写。只要这张图清楚，代码实现会自然收敛。
+
+对大规模实体，推荐 ECS 作为逻辑真值层，GameObject 作为表现消费层。对少量复杂对象，可以 GameObject 保持真值，ECS 只接收其摘要数据参与批量系统。关键是同一状态不要同时拥有两个主人。
+
+#### 三、用 Authoring + Baker 承接内容生产
+现代项目应优先使用 Authoring MonoBehaviour 表达编辑器配置，再通过 Baker 生成运行时 ECS 数据。这样既保留 Prefab、Inspector 和场景编辑能力，又避免运行时反复读取托管组件。Baker 中应尽量完成静态数据转换、BlobAsset 构建、初始组件添加和 Entity 关系建立。
+
+旧项目若仍使用 `ConvertToEntity` 相关模式，应把它列入迁移计划，逐步替换为 Baker。迁移时不必一次性完成，但新文档和新模块不应继续把旧接口作为推荐实现。
+
+#### 四、把运行时桥接层做成少量明确系统
+不要让所有 MonoBehaviour 都直接查询 ECS，也不要让所有 ECS System 都直接寻找 GameObject。更稳定的做法是建立少量桥接系统，例如输入桥接、Transform 表现同步、动画参数同步、UI 状态同步、事件表现分发。桥接层负责跨边界，其余系统尽量保持在各自世界内。
+
+桥接层应记录同步数量、耗时、延迟和异常情况。它既是数据通道，也是架构诊断点。
+
+#### 五、同步策略按数据类型分级
+位置和朝向表现可能需要每帧同步，但应尽量批量、单向、可降频；生命值、状态切换、技能释放更适合事件同步；配置和静态关系应通过 Baking 一次性写入；UI 显示可以根据可见性和变化频率降频；网络权威状态应通过专门同步层进入 ECS，而不是由表现对象直接写入。
+
+同步分级的目的不是追求最少同步，而是让每一种同步都有理由。没有理由的每帧双向同步，是混合架构最大的风险源。
+
+#### 六、限制托管引用进入高频 ECS 查询
+高频系统中的组件应尽量保持 blittable、紧凑、可 Burst、可并行。托管对象引用应集中在低频桥接或表现索引中。如果必须关联 GameObject，可用 Entity 到表现对象的外部映射表，或由表现层持有 Entity 引用并拉取必要结果。
+
+这个约束看似细节，实际上决定 ECS 是否还能保留数据导向优势。
+
+#### 七、为更新阶段建立固定顺序
+推荐将每帧流程明确为：采集输入与外部事件，写入 ECS 命令或缓冲；ECS Simulation 更新逻辑状态；桥接层输出表现数据；GameObject/Animator/UI 在表现阶段消费结果；必要的延迟和插值只影响视觉层。若需要物理反馈，应单独定义 FixedStep 与 Simulation 之间的数据交接。
+
+固定阶段顺序能让延迟可解释，也能避免多个系统互相覆盖。
+
+#### 八、从一个高价值试点开始迁移
+混合架构不适合从全项目大改开始。更可控的方式是选择一个对象数量大、规则明确、表现相对简单的模块作为试点，例如投射物、召唤单位、简单敌群、Buff 计时或感知筛选。先验证 Authoring、Baking、运行时实例化、同步表现、Profiler 指标和调试工具，再逐步扩展。
+
+试点成功的标志不是“跑起来”，而是团队能解释数据所有权、同步成本和调试路径。
+
+#### 九、建立混合架构验收指标
+建议至少跟踪：ECS 实体数量、关键 System 耗时、桥接同步耗时、主线程 Transform 写入数量、托管分配、Job 是否 Burst、表现对象数量、同步延迟、事件队列长度和问题复现能力。没有指标的混合架构，很容易在“感觉更先进”中失去控制。
+
+### 进阶讨论
+#### 一、反对纯 ECS 化的理由，不是保守，而是成本边界真实存在
+纯 ECS 化在某些类型项目中成立，例如高度同质的大规模模拟或对性能极端敏感且有强工具能力的团队。但大多数 Unity 项目还需要依赖大量现成编辑器和运行时系统。若把动画、UI、粒子、Timeline、关卡工具和插件全部重做为 ECS 友好形态，成本往往超过收益。架构成熟不是追求单一范式，而是知道范式的边界。
+
+#### 二、反对过度混合的理由，是两套体系可能互相削弱
+混合并不意味着哪里方便就从哪里拿数据。过度混合会让 ECS 失去并行和数据局部性，也会让 GameObject 层失去可读性。最糟糕的状态是：ECS 里充满托管引用，MonoBehaviour 到处查询 Entity，状态既在组件里也在脚本字段里，调试时没人知道真值在哪里。这种架构比纯传统项目更难维护。
+
+因此，混合架构要克制。边界少、方向清、桥接集中，才是可持续的混合。
+
+#### 三、动画系统通常是混合架构最复杂的边界
+动画既是表现，又可能通过根运动、事件帧、IK 和状态机影响逻辑。若 ECS 控制角色移动，而 Animator 又通过 Root Motion 改位置，就必须明确谁是权威。常见方案是：ECS 输出逻辑速度和状态，Animator 负责表现；Root Motion 若参与逻辑，则必须通过专门桥接写回 ECS，并由移动系统承认其权威。否则，角色位置会在两个世界之间互相覆盖。
+
+动画边界必须比普通表现边界更严格，因为它天然具有双向性。
+
+#### 四、物理系统的选择应按确定性和集成成本判断
+Unity 传统物理与 DOTS Physics/Havok Physics 的适用范围不同。传统物理与 GameObject 集成成熟，适合复杂碰撞体、现有玩法和工具链；DOTS 物理更适合大规模数据化模拟，但迁移成本和行为差异需要评估。混合架构中可以让传统物理提供事件，再把结果摘要写入 ECS；也可以让 ECS 物理成为核心模拟，再由 GameObject 表现消费。
+
+关键不是选哪一个“更先进”，而是物理结果是否成为权威、是否需要大规模并行、是否要求与现有内容兼容。
+
+#### 五、UI 与 ECS 的关系应保持间接
+UI 通常不适合直接 ECS 化。更合理的方式是 UI 通过 ViewModel、事件或查询服务读取 ECS 状态摘要，而不是每个控件都持有 Entity 查询逻辑。UI 的刷新频率、可见性和交互延迟与模拟系统不同，直接绑定会造成过度刷新和耦合。
+
+大型项目可以建立 ECS 到 UI 状态快照层，让 UI 消费稳定、已格式化、可降频的数据。这比让 UI 脚本深入 ECS 查询更可维护。
+
+#### 六、网络同步会放大混合架构的所有权问题
+一旦加入网络，状态权威会更复杂：服务器、客户端预测、ECS 本地模拟、GameObject 表现插值都可能拥有不同层级的“真实”。若边界不清，客户端表现值可能回流逻辑，逻辑预测值又被表现层覆盖，最终造成纠偏抖动和难复现问题。
+
+网络项目中应更早规定：服务器权威状态如何进入 ECS，本地预测如何标记，表现插值是否只读，纠偏是否直接改逻辑真值，GameObject 层是否允许写回。混合架构在单机中可以容忍的模糊点，到了网络中通常会变成严重问题。
+
+#### 七、SubScene 与实体场景化会改变内容组织方式
+现代 Entities 工作流中的 SubScene 不是简单文件夹，而是内容组织和 Baking 边界。它决定哪些对象以实体形式加载、卸载和流式管理。对大型场景而言，SubScene 可以帮助把静态或批量对象转为更高效的实体数据；但它也会改变关卡编辑、引用关系、资源依赖和调试方式。
+
+因此，是否使用 SubScene 应结合场景规模、加载策略、团队工具习惯和资源引用复杂度判断，而不是把它当作 ECS 的附属开关。
+
+#### 八、团队能力决定混合架构的上限
+ECS 要求团队理解数据导向、Job/Burst、SystemGroup、Baking、内存布局和调试工具。若团队只是把 MonoBehaviour 代码搬到 System 中，而没有掌握这些原则，混合架构很难得到收益。反过来，如果团队具备工具建设能力，就可以逐步把高频系统迁入 ECS，并保留传统工作流的生产优势。
+
+架构选择必须匹配团队能力。过早引入复杂 ECS 边界，可能会让项目在工具和调试上付出额外成本。
+
+#### 九、混合架构的文档化比普通模块更重要
+因为混合架构跨越两个运行时模型，口头约定很容易失效。正式文档至少应包含：哪些系统属于 ECS，哪些属于 GameObject；每类状态的权威来源；同步方向和频率；Baking 规则；运行时实例化流程；更新顺序；调试入口；旧 API 迁移策略。缺少这些文档，混合架构会随着人员变动逐渐变形。
 
 ### 总结
-混合模式是 ECS 在 Unity 项目中落地的务实选择。核心在于明确切割边界——ECS 层负责大规模数据计算，GameObject 层负责引擎集成部分。通过 ConvertToEntity 机制和 ComponentData 同步，两层的协作可以做到高效且解耦。
+ECS 与 Unity 传统开发结合的关键，不是把项目改造成某种纯粹范式，而是让数据导向计算和成熟内容工作流各自承担合适职责。ECS 适合大规模、高频、规则明确的逻辑；GameObject/MonoBehaviour 适合表现、编辑器生态、动画、UI、粒子、插件和复杂交互。混合架构能否成功，取决于状态所有权是否清晰、同步边界是否可控、Authoring/Baking 是否规范、运行时桥接是否集中、更新顺序是否明确以及调试工具是否足够。只要这些基础建立起来，混合模式就不是妥协，而是一种能在真实项目里持续演进的工程架构。
 
 ## 元数据
 - **创建时间：** 2026-04-20 21:04
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
+- **最后更新：** 2026-05-09 00:00
+- **版本：** v2.0
 - **分类：** 架构设计
-- **标签：** ECS、混合架构、HybridECS、ConvertToEntity、GameObject、架构设计、C#
-- **来源：** 已有文稿整理与深度重写
+- **标签：** ECS, Unity, 混合架构, GameObject, Baking, 架构设计, C#
+- **来源简注：** 基于 Unity ECS 与传统 GameObject 开发结合主题重新编写，聚焦混合边界、状态所有权、Baking 工作流、运行时桥接、同步策略和工程治理。
 
 ---
-*文档基于与吉良吉影的讨论，由小雅整理*
+*文档基于讨论主题重写整理*

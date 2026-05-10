@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本文重写《JobSystem 高级封装与异步集成》，删除原稿中重复的背景、重复总结和示例化堆叠，将内容升级为一篇面向 Unity 工程框架的 Job 封装设计文档。文章强调：Job System 的封装不是把 `Schedule` 和 `Complete` 包起来，也不是在 UniTask 里同步等待 Job；真正有价值的封装应围绕任务语义、JobHandle 依赖、NativeContainer 生命周期、取消后的结果废弃、异步 await 桥接、批处理调度、错误诊断、Profiler 指标和业务层接口展开。本文给出 JobRequest、JobAwaiter、批处理服务和封装评审清单，帮助团队在保留性能收益的同时降低使用门槛。
+Job System 的高级封装不是把 `Schedule` 和 `Complete` 包成一个更短的方法，也不是把 JobHandle 塞进普通异步流程后同步等待。真正有价值的封装，应围绕任务语义、JobHandle 依赖、NativeContainer 生命周期、取消后的结果废弃、异步 await 桥接、批处理调度、错误诊断、Profiler 指标和业务层接口展开。它的目标是在保留 Job System 性能收益的同时降低使用门槛，让业务开发者使用可见性查询、路径评分、网格生成等语义接口，而不是反复手写容易出错的底层生命周期代码。
 
 ## 正文
 
@@ -10,9 +10,9 @@
 
 Job System 原生 API 偏底层，要求开发者理解 NativeContainer、Allocator、JobHandle、依赖、Complete 时机、Burst 限制和安全系统。对于性能开发者来说这些概念是必要的，但对于大量业务开发者来说，直接手写 Job 容易出错：忘记 Dispose、立即 Complete、依赖漏传、取消后容器泄漏、结果晚返回覆盖新状态等都很常见。
 
-原稿提出了“对 Job System 进行二次封装”的方向，但示例仍偏简单，且存在一些问题：把 JobHandle 转 UniTask 的过程说得过于轻松，容易掩盖 Complete 阻塞；使用 `using var NativeArray` 跨异步等待需要明确生命周期；把结果 `ToArray()` 返回虽然方便，但可能产生分配；取消语义也需要说明 Job 通常不能被强行终止，只能废弃结果并保证资源释放。本文将这些问题系统化处理。
+在实际工程中，Job 封装最容易犯的错误是只追求调用形式简洁，却把 Complete 阻塞、NativeContainer 生命周期、取消后的清理、结果过期和分配成本隐藏起来。JobHandle 转为 UniTask 风格等待并不意味着 Job 变成了普通可取消任务；`ToArray()` 返回结果也不意味着高频路径没有 GC 压力；跨异步等待持有 NativeContainer 更要求明确 owner 和释放时机。封装若不能把这些问题系统化处理，就会把底层风险扩散到更难排查的框架层。
 
-### 核心内容
+### 核心原理
 
 #### 1. Job 封装的目标
 
@@ -188,7 +188,7 @@ UniTask 负责主线程非阻塞等待
 封装层负责生命周期、取消和结果映射
 ```
 
-### 实现方案
+### 设计思路
 
 #### 1. JobAwaiter 示例
 
@@ -348,13 +348,7 @@ public sealed class DistanceBatchService
 - 是否考虑批处理？
 - 是否用 Profiler 验证收益？
 
-### 总结
-
-Job System 的高级封装不是为了把底层概念全部藏起来，而是为了把危险细节集中治理。业务层需要的是“计算可见性”“批量评分”“生成网格”“查询候选目标”这样的语义接口；框架层负责 NativeContainer、JobHandle、依赖、取消、Complete、Dispose、Profiler 和日志。这样既能保留 Job System 的性能优势，又能避免每个业务开发者重复踩底层坑。
-
-与 UniTask 集成时，要牢记：UniTask 只是等待控制流，不能改变 Job 不能强制取消、NativeContainer 需要释放、Complete 可能阻塞的事实。成熟封装应做到非阻塞等待、取消废弃结果、完成后释放资源、批量调度、指标可观测。只有这样，Job System 才能从“性能示例代码”升级为项目可长期维护的并行计算基础设施。
-
-
+### 进阶讨论
 #### 附录 A：为什么不能简单暴露 NativeArray
 
 把 NativeArray 直接返回给业务层看似高效，但风险很高。业务层可能在 Job 未完成时读取，可能在 Dispose 后继续持有，也可能跨帧保存引用。更安全的做法是封装层负责读取结果，并返回托管快照、写入调用方提供的缓存，或通过受控访问器在有效期内读取。性能敏感路径可以设计专用结果缓存，但仍要明确生命周期。
@@ -555,15 +549,20 @@ Job 封装上线前要特别关注：取消时容器泄漏、结果过期写回�
 
 Job 异步封装最重要的不是 await，而是资源安全；最重要的不是隐藏 API，而是保留调度能力；最重要的不是写得像普通异步方法，而是让并行计算在可观测、可取消、可释放的框架内运行。
 
+### 总结
+Job System 的高级封装不是为了把底层概念全部藏起来，而是为了把危险细节集中治理。业务层需要的是“计算可见性”“批量评分”“生成网格”“查询候选目标”这样的语义接口；框架层负责 NativeContainer、JobHandle、依赖、取消、Complete、Dispose、Profiler 和日志。这样既能保留 Job System 的性能优势，又能避免每个业务开发者重复踩底层坑。
+
+与 UniTask 集成时，要牢记：UniTask 只是等待控制流，不能改变 Job 不能强制取消、NativeContainer 需要释放、Complete 可能阻塞的事实。成熟封装应做到非阻塞等待、取消废弃结果、完成后释放资源、批量调度、指标可观测。只有这样，Job System 才能从“性能示例代码”升级为项目可长期维护的并行计算基础设施。
+
 ## 元数据
 
 - **创建时间：** 2026-04-24
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
+- **最后更新：** 2026-05-08 00:00
+- **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity、Job System、UniTask、JobHandle、NativeContainer、异步封装、批处理
-- **来源：** 已有文稿整理、官方文档校正、工程化经验重写
+- **标签：** Unity, Job System, UniTask, JobHandle, NativeContainer, 异步封装, 批处理
+- **来源简注：** 基于 Unity Job System 高级封装与异步集成主题重新编写，聚焦 JobHandle 等待、NativeContainer 生命周期、取消清理、批处理和可观测性。
 
 ---
 
-*文档基于与吉良吉影的讨论，由小雅整理*
+*文档基于讨论主题重写整理*

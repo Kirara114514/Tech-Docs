@@ -1,209 +1,246 @@
-# UniRx高级特性与自定义
+# UniRx 高级特性与自定义
 
 ## 摘要
-在掌握了 UniRx 基础和响应式架构之后，高级特性和自定义扩展成为应对特殊需求的关键。本文作为响应式编程系列的收官篇，深入 UniRx 的内部运作机制，介绍自定义操作符、调度器扩展、框架集成和单元测试等高级话题。
+
+UniRx 的高级价值不在于堆叠更多操作符，而在于理解响应式系统的底层语义：流何时开始产生数据，订阅者是否共享同一个源，错误如何传播，资源何时释放，调度器决定代码运行在哪个线程，时间相关逻辑如何测试，自定义操作符如何保持可组合性与可释放性。对 Unity 项目而言，UniRx 既可以把 UI、生命周期、异步任务、网络回包和状态派生统一成数据流，也可能因为 Hot/Cold 语义混淆、Subject 滥用、订阅泄漏、线程切换错误和操作符链过度复杂而成为新的维护成本。
+
+本文围绕 UniRx 的高级特性与自定义扩展展开，核心论点是：高级 UniRx 使用不是掌握更多 API，而是能围绕流的生命周期、共享语义、调度边界和资源释放建立稳定工程规则。文章先分析基础响应式写法在复杂项目中遇到的瓶颈，再解释 `IObservable<T>` / `IObserver<T>`、Hot 与 Cold、Subject 类型、调度器、自定义操作符、Triggers、测试调度器和性能诊断的核心原理；随后提出自定义操作符设计、Subject 封装、主线程调度、时间逻辑测试、订阅可观测性和框架集成策略；最后讨论常见反模式与验收标准。目标是把 UniRx 从“好用的链式写法”提升为可长期维护的响应式基础设施。
 
 ## 正文
 
 ### 背景
-前面的教程从 `ReactiveProperty` 的基础概念开始，逐步深入到 `ReactiveCommand`、`ReactiveCollection`、生命周期管理、高级操作符，直到响应式架构的 MVVM 模式和性能优化。现在，我们将探索 UniRx 库更深层次的奥秘：它的内部运作机制，以及如何在必要时自定义操作符、扩展调度器和集成框架。
 
-理解这些高级特性，不仅能让你更好地利用 UniRx，还能帮助你调试更复杂的问题，甚至为库贡献代码。
+#### 一、基础 UniRx 写法无法自动解决复杂流问题
 
-### 1. UniRx 的核心架构：IObservable 与 IObserver
+UniRx 入门通常从按钮点击、`ReactiveProperty<T>`、`Subscribe` 和 `AddTo` 开始。它能快速改善 Unity 中事件分散、UI 刷新重复和回调嵌套的问题。但当项目进入复杂阶段，问题会从“怎么把事件变成流”转向“这个流到底由谁拥有、何时开始、谁共享、何时结束、在哪个线程执行、失败后如何恢复”。
 
-UniRx 的核心是 Rx（Reactive Extensions）的实现，它基于两个核心接口：
+例如，一个网络请求流是每个订阅者都发起一次请求，还是多个订阅者共享同一次请求？一个 UI 点击流在界面关闭后是否释放？一个 `ReplaySubject` 是否无限缓存历史？一个自定义节流操作符是否可测试？后台线程返回的数据是否切回主线程再更新 UI？如果这些问题没有明确答案，UniRx 的语法优势会很快被隐式复杂度抵消。
 
-- **`IObservable<T>`（可观察对象）：** 表示一个可以被观察的数据流。你可以把它想象成一个"事件源"或"数据管道"，它能够随着时间的推移向观察者推送数据。
-- **`IObserver<T>`（观察者）：** 表示一个接收来自 `IObservable` 通知的使用者。
+因此，UniRx 的高级使用不应理解为“掌握更多操作符”，而应理解为“掌握响应式系统的边界”。流不是普通变量，订阅不是普通回调，Subject 不是随意可写事件总线，调度器不是可选细节。它们共同决定响应式代码是否能在长期项目中稳定运行。
+
+#### 二、Unity 环境让 UniRx 的生命周期问题更突出
+
+Unity 对象有复杂生命周期。`MonoBehaviour` 可能启用、禁用、销毁；对象池对象会复用；场景切换会释放大量视图；全局服务可能跨场景存在；异步任务可能在界面关闭后返回；后台线程可能触发回调。UniRx 把这些事件统一成流，但并不会自动理解每个流的业务生命周期。
+
+一个订阅如果绑定到错误生命周期，就会出现旧对象继续响应、新对象重复订阅、对象池回收后仍收到事件、场景切换后全局流引用旧 UI 等问题。`AddTo` 能帮助释放，但前提是释放对象本身的生命周期正确。高级使用必须把“订阅归属”作为设计的一部分。
+
+此外，Unity 主线程约束也非常强。许多操作符可以在后台线程工作，但最终访问 Unity API 必须回到主线程。若调度边界不明确，响应式代码可能在编辑器中偶尔正常，在真机或并发环境中出现难复现错误。
+
+#### 三、自定义扩展应服务工程语义，而不是制造新语法
+
+UniRx 提供大量操作符，但项目仍可能需要自定义扩展，例如带首帧触发的节流、按 Unity 生命周期自动释放、带错误分类的异步命令、基于帧的限流、主线程队列调度、资源加载进度合并等。自定义操作符的价值在于封装项目中的重复流模式，让语义更清楚。
+
+但自定义操作符也容易出错。若没有正确返回 `IDisposable`，订阅就无法释放；若使用真实时间而不是调度器，测试就不稳定；若吞掉错误，流会进入不可见失败状态；若线程假设不清，UI 更新可能越界。高级自定义不是把几段 Subscribe 包起来，而是要遵守 Rx 的组合契约。
+
+### 核心原理
+
+#### 一、IObservable 与 IObserver 定义了流的契约
+
+UniRx 的核心是 `IObservable<T>` 与 `IObserver<T>`。前者表示可被订阅的数据源，后者接收 `OnNext`、`OnError` 和 `OnCompleted`。这个三元通知契约决定了流不仅会产生值，也可能失败或完成。
+
+理解这个契约非常重要。`OnNext` 表示下一个值；`OnError` 表示流以错误结束，通常不再继续；`OnCompleted` 表示流正常结束。许多初级用法只关心 `OnNext`，忽略错误和完成，导致异常被吞掉、资源未释放或订阅者误以为流仍然活跃。
+
+操作符本质上是对流的包装。`Select` 把源流的值映射成新值，`Where` 过滤值，`Merge` 合并多个流，`TakeUntil` 根据另一个流结束订阅。每个操作符都应该保持契约：正确转发值、错误、完成，并在订阅释放时释放上游资源。自定义操作符也必须遵守同样原则。
+
+#### 二、Hot 与 Cold 决定数据产生和共享方式
+
+Cold Observable 通常在订阅时才开始产生数据，每个订阅者拥有独立执行。例如延迟计算、范围序列、某些请求封装。Hot Observable 则不依赖订阅者存在而产生数据，订阅者从接入时刻开始接收，例如 Unity Update、按钮点击、Subject、全局事件。
+
+这个区别会直接影响业务行为。若网络请求是 Cold，两个订阅者可能发起两次请求；若状态事件是 Hot，晚订阅者可能错过早期事件；若初始化流程被错误地做成 Hot，界面打开晚了就收不到关键状态；若高成本计算被错误地重复订阅，性能会被放大。
+
+共享语义要显式设计。需要共享一次执行时，可以使用 Publish、Replay、RefCount 或缓存结果；需要每个订阅者独立执行时，应保留 Cold 语义。不要让 Hot/Cold 行为成为偶然结果。文档和封装应说明订阅是否会触发新执行。
+
+#### 三、Subject 是桥接工具，不是默认架构中心
+
+Subject 同时是观察者和可观察对象，可以手动推送值，因此非常灵活。`Subject<T>` 适合瞬时事件，`BehaviorSubject<T>` 适合持有当前值的状态，`ReplaySubject<T>` 适合有限历史回放，`AsyncSubject<T>` 适合只关心最终结果的异步操作。每种 Subject 都有明确语义。
+
+滥用 Subject 是 UniRx 项目常见问题。把 Subject 作为全局事件总线到处公开，会让任何模块都能 `OnNext`，事件来源不可控；使用 ReplaySubject 不限制缓存，会造成内存增长；用 BehaviorSubject 表示一次性事件，会让新订阅者收到旧事件；直接公开 Subject 会破坏写入边界。
+
+正式项目中，Subject 应尽量内部持有，对外暴露 `IObservable<T>` 或只读接口。它更适合作为命令、事件、状态封装的内部实现，而不是裸露给所有业务模块。
+
+#### 四、调度器决定时间和线程边界
+
+调度器控制操作在哪个上下文执行，也控制时间相关操作的测试方式。在 Unity 中，最重要的调度边界是主线程。UI 更新、Unity 对象访问、GameObject 操作都应在主线程执行。后台任务可以在其他线程完成计算，但最终通知 UI 前应切回主线程。
+
+时间相关操作也依赖调度器。Delay、Interval、Throttle、Timeout 等如果使用真实时间，会让测试不稳定。TestScheduler 允许在测试中虚拟推进时间，从而确定性验证节流、延迟和超时逻辑。自定义操作符若内部直接使用 `DateTime.Now` 或 `Time.time`，就会失去可测试性，也难以适配不同时间源。
+
+因此，高级 UniRx 代码应尽量把调度器作为可注入依赖。生产环境使用主线程或实际时间调度器，测试环境使用虚拟调度器。这样流逻辑才真正可测试。
+
+#### 五、自定义操作符必须遵守资源释放契约
+
+自定义操作符通常通过 `Observable.Create` 或组合现有操作符实现。无论哪种方式，都必须正确处理订阅释放、错误转发和完成转发。订阅返回的 `IDisposable` 应能释放上游订阅和内部资源。若内部创建计时器、缓存、Subject 或协程，也要在释放时清理。
+
+自定义操作符还应避免隐藏副作用。操作符应尽量保持纯变换语义：输入流进入，输出流出来。若操作符内部记录日志、访问 Unity 对象、启动协程或写全局状态，应在命名和文档中明确。否则调用者会误以为它只是普通变换。
+
+一个专业的自定义操作符，应该能被复用、测试和推理。它的行为应在 Hot/Cold、错误、完成、取消、调度器方面都有明确说明。
+
+### 设计思路
+
+#### 一、先定义流的所有权和生命周期
+
+每条关键流都应能回答：谁创建，谁订阅，谁释放，是否跨场景，是否共享，是否可能完成。View 层订阅通常绑定到 View 生命周期；ViewModel 内部组合流绑定到 ViewModel 生命周期；全局服务流由服务持有，短生命周期对象订阅时必须释放。
+
+流所有权不清时，泄漏和重复订阅很难避免。团队可以为关键响应式链路建立归属图，标注源流、派生流、订阅者和释放点。图不必复杂，但能显著降低接手成本。
+
+#### 二、Subject 内部化，对外只暴露 Observable
+
+Subject 的 `OnNext` 权限应由拥有者控制。业务外部只应看到 `IObservable<T>`，不能直接推送。这样事件来源明确，也便于后续替换实现、加日志、加校验或做审计。
+
+例如消息中心内部可以持有 `Subject<Message>`，对外提供 `Messages`；状态模型内部持有 `BehaviorSubject<State>`，对外提供只读状态流；命令内部持有错误 Subject，对外提供错误流。这个边界与 `ReactiveProperty` 的只读暴露同理。
+
+#### 三、自定义操作符优先组合现有操作符
+
+如果一个需求可以用现有操作符组合清楚表达，就优先组合。只有当组合重复出现、语义重要或链路过长时，再提取自定义操作符。自定义操作符应有明确名字，例如 `ThrottleFirstFrame`、`TakeUntilDisable`、`ObserveOnUnityMainThread`，让调用者理解语义。
+
+实现时优先保留调度器参数，避免硬编码时间来源。涉及 Unity 生命周期时，要明确目标对象销毁、禁用和复用时的行为。涉及错误处理时，要说明是否转发、吞掉或转换错误。
+
+#### 四、时间相关逻辑必须可测试
+
+涉及 Delay、Throttle、Interval、Timeout、RetryWithDelay 的逻辑，都应能使用测试调度器验证。不要把真实时间写死在业务中。比如搜索输入节流、按钮防抖、网络超时、提示延迟关闭，都适合通过虚拟时间测试。
+
+可测试性是高级响应式代码的重要指标。如果一个流只能靠手动等几秒观察结果，说明它还没有被工程化。TestScheduler 能让时间逻辑变成普通单元测试。
+
+#### 五、主线程调度集中处理
+
+Unity 项目应建立明确主线程调度策略。网络层、文件层、SDK 回调可以在后台线程产生结果，但进入 UI 和 Unity 对象前必须统一切回主线程。不要让每个订阅者自己猜是否需要 `ObserveOnMainThread`。
+
+一种做法是在基础设施层约定：所有对外暴露给 ViewModel 的 UI 状态流已经在主线程；另一种做法是在 View 绑定前统一切换。无论哪种，都要一致。混乱的调度策略会制造难以复现的线程 bug。
+
+#### 六、为订阅数量和泄漏建立观测
+
+响应式代码的泄漏不一定表现为内存立刻增长，更多表现为旧对象仍响应、事件重复处理、场景切换后订阅数量不下降。开发版应提供最小观测：关键流订阅数量、场景切换前后活跃订阅、对象销毁后回调告警、长生命周期 Subject 的订阅者数量。
+
+观测工具可以简单，但必须存在。没有观测时，UniRx 泄漏只能靠猜；有观测时，可以从订阅数量和归属关系快速定位问题。
+
+### 进阶讨论
+
+#### 一、Hot/Cold 误判是高级 UniRx 问题的根源
+
+许多响应式 bug 都能追溯到 Hot/Cold 误判。重复请求、错过初始化事件、晚订阅拿不到状态、多个订阅者互相影响，背后都是数据产生和共享语义不清。团队应把 Hot/Cold 作为流设计的第一问题，而不是调试时才想起。
+
+状态流通常应让晚订阅者能拿到当前状态；事件流通常不应重放历史；请求流是否共享要按业务决定。只要这些语义清楚，很多问题会提前消失。
+
+#### 二、ReplaySubject 要慎用
+
+ReplaySubject 很强，但风险也大。无限重放会缓存所有历史值，长期运行可能造成内存增长。它适合有限历史、日志回放、调试、或确实需要晚订阅者补齐历史的场景。使用时应限制数量或时间窗口。
+
+如果只是需要当前值，应使用 BehaviorSubject 或 ReactiveProperty；如果只是一次性事件，不应重放。重放语义必须有明确业务理由。
+
+#### 三、Triggers 让 Unity 回调流化，也会隐藏组件成本
+
+UniRx.Triggers 能把 Unity 生命周期和事件转为 Observable，例如 Update、Click、Collision、Destroy。这让声明式写法更统一。但 Triggers 通常需要附加组件或内部 Subject，过度使用可能增加隐藏对象和订阅成本。
+
+对于低频 UI 和生命周期事件，Triggers 很方便；对于大量对象的每帧 Update 流，要谨慎评估性能。不要为了统一写法，把所有 MonoBehaviour 回调都替换为流。响应式化应服务语义，不是消灭所有原生回调。
+
+#### 四、自定义操作符不是业务规则收纳箱
+
+自定义操作符应封装通用流模式，不应承载具体业务流程。比如“节流首个点击”“绑定生命周期”“按主线程观察”适合做操作符；“购买成功后刷新背包再打开弹窗”更适合命令或服务流程。若操作符包含太多业务概念，它就会难以复用和测试。
+
+命名也很重要。操作符名称应反映流变换语义，而不是项目内部临时需求。好名字能减少文档成本，坏名字会把响应式链路变成黑箱。
+
+#### 五、错误流需要策略
+
+Rx 契约中 `OnError` 通常会终止流。对于长期 UI 状态流，这可能不是期望行为。比如网络状态流不能因为一次异常就永久结束；按钮点击流也不应因一个订阅者错误停止。项目应区分致命错误、可恢复错误和业务失败。
+
+可恢复错误可以转换为错误事件或结果对象，而不是直接终止主状态流；致命错误可以进入全局错误通道。关键是不能随意吞掉错误，也不能让一个可恢复异常杀死长期流。
+
+#### 六、验收标准
+
+一个成熟的 UniRx 高级使用方案，应满足以下标准：关键流 Hot/Cold 语义明确；Subject 内部化；订阅生命周期可说明；时间逻辑可用 TestScheduler 测试；UI 更新有主线程调度策略；自定义操作符正确释放资源；ReplaySubject 有缓存边界；响应式链路有最小观测；操作符组合可读可维护。
+
+若项目只是到处 `Subscribe`、到处 `Subject`、到处 `AddTo`，但无法说明流的生命周期和共享语义，说明仍停留在 API 使用阶段，而没有进入工程化阶段。
+
+
+#### 七、实现方案：自定义操作符应从组合开始
+
+多数自定义操作符不需要从 `Observable.Create` 开始。若现有操作符能表达语义，优先组合。例如“只取首次点击并在一段时间内忽略后续点击”，可以先用已有节流或窗口操作符表达，再根据项目需要封装命名。只有当组合无法表达释放、调度或特殊状态时，才手写底层创建。
+
+手写时应遵守最小契约：订阅源流，正确转发 `OnNext`、`OnError`、`OnCompleted`，释放时释放上游订阅和内部资源。任何内部计时器、Subject、协程、CancellationToken 都必须被释放。自定义操作符若不能被释放，就不应进入正式项目。
+
+#### 八、实现方案：调度器参数应成为高级操作符的默认设计
+
+时间相关自定义操作符应允许传入调度器。硬编码 `DateTime.Now`、`Time.time` 或真实 `Timer` 会让测试不可控，也会让不同平台表现难以统一。更好的做法是让生产环境传入实际调度器，测试环境传入虚拟调度器。
+
+这条原则不仅适用于 Delay 和 Throttle，也适用于超时、重试间隔、冷却时间、输入防抖、提示延迟关闭。只要逻辑依赖时间，就应考虑能否用虚拟时间测试。不能测试的时间逻辑，迟早会在边界条件上出问题。
+
+#### 九、实现方案：Subject 封装模板
+
+Subject 的封装可以遵循一个简单模板：内部字段持有 Subject，外部只暴露 `IObservable<T>`，推送方法限制在拥有者内部或受控服务中。示意如下：
 
 ```csharp
-public interface IObservable<out T>
+private readonly Subject<Message> _messages = new Subject<Message>();
+public IObservable<Message> Messages => _messages;
+
+private void Publish(Message message)
 {
-    IDisposable Subscribe(IObserver<T> observer);
-}
-
-public interface IObserver<in T>
-{
-    void OnNext(T value);     // 推送下一个数据
-    void OnError(Exception error); // 发生错误
-    void OnCompleted();       // 数据流结束
+    _messages.OnNext(message);
 }
 ```
 
-理解这两个接口至关重要，因为 UniRx 中的所有操作符（`Select`、`Where`、`Merge` 等）本质上都是对 `IObservable` 的封装——它们接收一个 `IObservable`，返回一个新的 `IObservable`，内部在订阅原始流的同时进行变换或过滤。
+这个示例看似简单，却能防止外部任意推送。若后续需要审计、过滤、日志或权限判断，都可以加在 `Publish` 边界中。裸露 Subject 则会让所有模块都绕过边界。
 
-### 2. Hot vs Cold Observable
+#### 十、反模式：把 Subject 当作全局可写事件总线
 
-理解 Hot 和 Cold Observable 的区别，是避免响应式编程中许多隐蔽 BUG 的关键。
+全局 Subject 很方便，也最危险。它让任何地方都能发布任何事件，短期减少引用，长期制造隐式耦合。事件来源不可追踪，订阅者不知道谁会推送，发布者不知道谁在监听。项目越大，全局 Subject 越像一个没有类型治理的全局变量。
 
-| 特性 | Cold Observable | Hot Observable |
-|:---|:---|:---|
-| 数据产生时机 | 订阅时才开始产生数据 | 不管有无订阅，一直在产生数据 |
-| 每个订阅者 | 收到独立的数据序列（从头开始） | 收到相同的数据流（从订阅时刻开始） |
-| 典型例子 | `Observable.Range()`, HTTP 请求 | `Observable.EveryUpdate()`, `Subject<T>` |
-| 资源共享 | 每个订阅者独立 | 所有订阅者共享 |
+若确实需要事件总线，应限制消息类型、发布权限和订阅范围，并提供调试面板。更重要的是，不要让所有局部事件都进入全局总线。局部 UI、对象内部状态、短生命周期流程应使用局部流或对象事件。
 
-**为什么重要？** 如果你有一个 `Subject<int>` 作为全局事件总线，在 Awake 中订阅和在 Start 中订阅，可能一个只收到部分事件，另一个完全没收到关键初始化事件。
+#### 十一、反模式：用 ReplaySubject 修复错过事件
 
-**Publish 操作符**可以将 Cold Observable 转换为 Hot Observable，让多个订阅者共享同一个订阅源：
+当晚订阅者错过事件时，很多人会直接换成 `ReplaySubject`。这可能掩盖真正的建模问题。如果晚订阅者应该知道当前状态，应该使用状态模型；如果它需要完整历史，就应明确历史边界；如果只是订阅时机错了，应调整生命周期，而不是无限重放。
 
-```csharp
-var coldObservable = Observable.Interval(TimeSpan.FromSeconds(1)).Take(5);
-var hotObservable = coldObservable.Publish().RefCount(); // 转为 Hot
+ReplaySubject 必须有缓存限制或清理策略。否则它会把所有历史值保留到流结束，对长期运行的 Unity 项目非常危险。重放不是补丁，而是明确语义。
 
-var sub1 = hotObservable.Subscribe(x => Debug.Log($"订阅者1: {x}"));
-var sub2 = hotObservable.Subscribe(x => Debug.Log($"订阅者2: {x}"));
-```
+#### 十二、反模式：Subscribe 里做所有事情
 
-### 3. Subject 类型详解
+UniRx 初学者容易把所有逻辑写进 `Subscribe`。这会让响应式链路变成隐式流程中心。更好的方式是把流变换、过滤、错误处理和调度尽量放在订阅前，`Subscribe` 只做最终消费。若 `Subscribe` 里出现大量业务分支和状态写入，说明该逻辑应该被提升为命令、服务或命名流。
 
-UniRx 提供了四种核心的 Subject 类型：
+订阅越薄，流越容易测试；订阅越厚，越难复用和排查。高级 UniRx 代码应让语义在流声明阶段就清楚，而不是把所有解释留到最后一个 Lambda。
 
-| 类型 | 行为 |
-|:---|:---|
-| `Subject<T>` | 标准的 Hot Observable，手动调用 OnNext/OnError/OnCompleted 推送数据。无缓存。 |
-| `BehaviorSubject<T>` | 总是保留最近一次推送的值。新订阅者会立即收到该值。需要初始值。 |
-| `ReplaySubject<T>` | 缓存所有（或指定数量/时间段内）推送的值。新订阅者收到完整历史。 |
-| `AsyncSubject<T>` | 只推送最后一个值和完成通知。适用于一次性异步操作（如 HTTP 请求）。 |
+#### 十三、测试策略：不要只测试最终值，也要测试释放和错误
 
-**使用建议：**
+响应式测试不应只验证收到哪些值，还应验证错误、完成和释放。时间相关流要用虚拟时间推进；生命周期相关流要模拟销毁或取消；错误相关流要确认是否进入错误通道；自定义操作符要确认 Dispose 后不再收到上游值。
 
-- `Subject<T>` 适合临时事件系统，订阅只在事件发生期间有意义。
-- `BehaviorSubject<T>` 适合表示"当前状态"，如玩家血量、加载进度、当前界面。
-- `ReplaySubject<T>` 适合历史回放场景，但要小心内存泄漏，因为缓存会持续增长。
-- `AsyncSubject<T>` 适合封装异步结果。
+这类测试能防止最隐蔽的问题：表面功能正常，但释放后仍然响应；错误被吞掉；完成没有转发；超时在边界条件下不触发。高级 UniRx 代码的质量，很大程度取决于这些非 happy path 是否被覆盖。
 
-### 4. 自定义操作符
+#### 十四、调试策略：为关键流命名
 
-当 UniRx 内置操作符无法满足需求时，可以编写自定义操作符。以 `ThrottleWithFirst` 为例：
+响应式链路难排查的原因之一，是很多流都是匿名组合。开发版可以为关键流提供名称、订阅数量和最近事件记录。比如 `LoginButtonClickStream`、`InventoryRedDotState`、`NetworkReconnectFlow`。命名本身就是文档，它让调试面板和日志更可读。
 
-```csharp
-public static IObservable<T> ThrottleWithFirst<T>(
-    this IObservable<T> source, TimeSpan threshold)
-{
-    return Observable.Create<T>(observer =>
-    {
-        var lastRaiseTime = DateTime.MinValue;
-        return source.Subscribe(
-            value =>
-            {
-                var now = DateTime.Now;
-                if ((now - lastRaiseTime) >= threshold)
-                {
-                    lastRaiseTime = now;
-                    observer.OnNext(value);
-                }
-            },
-            observer.OnError,
-            observer.OnCompleted
-        );
-    });
-}
-```
+不要低估命名的价值。一个清晰命名的派生流，比一条二十行匿名链式表达式更容易维护。团队协作中，命名是响应式代码可读性的核心工具之一。
 
-**使用场景：**
+#### 十五、框架集成：UniRx 不应泄漏到所有层
 
-```csharp
-Observable.EveryUpdate()
-    .Where(_ => Input.GetMouseButtonDown(0))
-    .ThrottleWithFirst(TimeSpan.FromSeconds(1))
-    .Subscribe(_ => Debug.Log($"鼠标点击 (节流): {Time.time}"))
-    .AddTo(this);
-```
+项目引入 UniRx 后，不意味着所有层都必须直接依赖 UniRx。领域层可以暴露普通接口或只读状态，ViewModel 层使用 UniRx 组合，View 层绑定可观察状态。若 UniRx 类型渗透到所有业务核心，未来替换库或升级框架会非常困难。
 
-自定义操作符让你能够将复杂模式封装成简洁的单元。编写时需特别注意确保 `IDisposable` 的正确返回和清理，避免资源泄漏。
+更稳妥的做法是把 UniRx 作为状态组织和 UI 交互层工具，在边界处通过接口封装。核心领域规则不应为了响应式写法而依赖 Unity 或 UniRx。这样既能享受 UniRx 的组合能力，又不会让技术库变成不可替换的业务核心。
 
-### 5. UniRx 的 Triggers 命名空间
-
-`UniRx.Triggers` 命名空间下的扩展方法（如 `OnClickAsObservable`、`UpdateAsObservable`）将 MonoBehaviour 的生命周期回调和事件转换为 `IObservable` 流。它们的原理通常是在内部为每个 MonoBehaviour 添加一个隐藏的组件来捕获对应的 Unity 事件，然后通过 `Subject` 发射给订阅者。
-
-这使得代码可以完全脱离传统的 Unity 回调，以声明式的方式处理所有事件。
-
-### 6. 单元测试与响应式代码
-
-由于 ViewModel 及其内部的响应式逻辑是纯 C# 代码，非常适合进行单元测试。
-
-**关键实践：**
-
-1. **模拟依赖：** 使用 Mocking 框架（如 Moq）模拟 Model 层或外部依赖。
-2. **控制时间：** 使用 `TestScheduler` 精确控制时间流逝，测试涉及 Delay、Interval、Throttle 等操作符。
-
-```csharp
-[Test]
-public void Test_Interval_With_TestScheduler()
-{
-    var scheduler = new TestScheduler();
-    var result = new List<long>();
-    var disposable = Observable.Interval(TimeSpan.FromSeconds(1), scheduler)
-        .Take(3)
-        .Subscribe(x => result.Add(x));
-
-    scheduler.AdvanceBy(TimeSpan.FromSeconds(1.5).Ticks);
-    Assert.AreEqual(1, result.Count);
-
-    scheduler.AdvanceBy(TimeSpan.FromSeconds(2).Ticks);
-    Assert.AreEqual(3, result.Count);
-}
-```
-
-### 7. 调度器（Scheduler）与线程模型
-
-UniRx 的调度器控制着操作符在哪个上下文中执行：
-
-- `Scheduler.Immediate`：立即在当前线程执行。
-- `Scheduler.ThreadPool`：在 .NET 线程池上执行。
-- `Scheduler.MainThread`：在 Unity 主线程上执行（确保 UI 操作安全）。
-- `ObserveOnMainThread()`：将后续操作切换到主线程。
-- `SubscribeOnMainThread()`：在订阅时确保在主线线程执行。
-
-对于 Unity 开发，`ObserveOnMainThread()` 是最常用的安全模式：确保耗时计算在后台线程运行，结果回到主线程更新 UI。
-
-### 8. 性能优化与 Profiler
-
-响应式编程的性能问题通常来自过度订阅、不必要的计算和对象分配。使用 UniRx Profiler 可以：
-
-- 统计活跃订阅数量和变化
-- 追踪每个流的创建和释放
-- 发现泄漏的订阅
-
-关键优化策略：
-
-- **避免每个 Update 中创建新流**：将 immutable 的流定义在 Awake 中，只订阅一次。
-- **使用 AsObservable 保护内部 Subject**：外部只能订阅，不能推送。
-- **合理选择 Subject 类型**：BehaviorSubject 的开销高于 Subject。
-- **注意闭包分配**：避免在 Subscribe lambda 中捕获大量外部变量。
-- **使用 Return/Func 替代即时值**：减少不必要的流创建。
-
-### 实现方案
-
-1. **理解 Hot/Cold 语义**：在架构设计中明确数据流的产生时机。表示状态的属性使用 BehaviorSubject，临时事件使用 Subject。
-
-2. **Subject 按需选择**：需要当前值的用 BehaviorSubject，只需要推送的用 Subject，需要重放历史的用 ReplaySubject 但注意控制缓存大小。
-
-3. **自定义操作符封装**：当内置操作符组合无法简洁表达需求时，提取为自定义操作符，注意正确实现 IDisposable 的资源管理。
-
-4. **TestScheduler 覆盖时间相关测试**：所有涉及 Delay、Throttle、Interval 的逻辑都应使用 TestScheduler 进行确定性测试。
-
-5. **ObserveOnMainThread 保护 UI**：后台线程的 Observable 链在最终订阅 UI 前切换到主线程。
-
-6. **Profiler 定期检查订阅泄漏**：在场景切换或对象销毁后检查活跃订阅数，确保无泄漏。
-
-7. **AsObservable 保护 Subject**：对外部暴露 Subject 时应返回 `.AsObservable()`，防止外部误用 OnNext。
 
 ### 总结
 
-UniRx 的高级特性——Hot/Cold Observable、Subject 类型体系、自定义操作符、调度器、TestScheduler 和 Profiler——构成了一个强大且灵活的响应式编程工具箱。理解这些底层机制，不仅能让你在复杂场景中找到合适的解决方案，还能帮助你诊断性能问题和订阅泄漏。
+UniRx 的高级特性不是一组炫技 API，而是一套关于流生命周期、共享语义、调度边界和资源释放的工程规则。理解 `IObservable` / `IObserver` 契约、Hot/Cold 区别、Subject 类型语义、调度器、测试调度器和自定义操作符资源管理，是在复杂 Unity 项目中稳定使用 UniRx 的前提。
 
-响应式编程的学习曲线可能相对陡峭，但一旦掌握了其思维模式和这些核心机制，你会发现它能极大地提升 Unity 开发的效率和代码质量。持续实践、查阅文档、阅读优秀的开源项目代码，是巩固和提升响应式编程技能的最佳途径。
+对 Unity 而言，UniRx 的最大价值在于把 UI、状态、生命周期、异步和事件统一为可组合的数据流；最大风险则在于流语义被隐藏后，订阅泄漏、线程错误和事件来源失控更难排查。高级使用的目标，是让这些边界显式化。
+
+工程实践上，应坚持 Subject 内部化、只读暴露、生命周期归属、主线程调度、时间逻辑可测试和订阅可观测。自定义操作符应服务通用语义，并严格遵守错误、完成和释放契约。这样 UniRx 才能成为项目响应式基础设施，而不是散落在脚本中的链式技巧。
+
+最终判断标准是：使用 UniRx 后，数据流是否更清楚、生命周期是否更可控、异步和时间逻辑是否更可测试。如果答案是肯定的，高级特性就发挥了价值；如果只是把简单逻辑包装成复杂流，反而应回到更朴素的事件、属性或命令模型。
+
+## 知识缺口
+
+1. UniRx、R3 与标准 System.Reactive 在调度器、Subject 行为、生命周期工具和 Unity 集成方面存在差异，需要按项目使用库确认。
+2. UniRx.Triggers 在大量对象和高频回调下的实际性能成本，需要结合目标平台 profiling。
+3. 自定义操作符的测试策略和虚拟时间覆盖范围，需要根据项目测试框架进一步规范。
+4. 订阅可观测工具、活跃订阅统计和泄漏告警的具体实现，需要结合项目调试面板和运行时诊断系统设计。
 
 ## 元数据
+
 - **创建时间：** 2026-04-12 23:47
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
+- **最后更新：** 2026-05-06 00:00
+- **版本：** v2.0
 - **分类：** C#与响应式编程
-- **标签：** UniRx、响应式编程、自定义操作符、调度器、单元测试
-- **来源：** StackEdit 导出文档与深度重写
+- **标签：** UniRx, 响应式编程, IObservable, Subject, Hot Observable, Cold Observable, 调度器, 自定义操作符, TestScheduler
+- **来源简注：** 基于 UniRx 高级特性与自定义扩展主题重新编写，聚焦流语义、调度、测试、资源释放和工程治理。
 
 ---
-*文档基于与吉良吉影的讨论，由小雅整理*
+*文档基于讨论主题重写整理*

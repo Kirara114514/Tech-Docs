@@ -1,297 +1,266 @@
-# 响应式架构与MVVM模式
+# 响应式架构与 MVVM 模式
 
 ## 摘要
-响应式架构与MVVM模式结合，为Unity开发提供了清晰的分层结构和数据驱动设计。本文介绍如何在Unity中实现响应式MVVM架构，分离业务逻辑与UI表现，提升代码的可测试性和可维护性。内容涵盖基础 MVVM 的三层职责划分、数据绑定实践，以及工程化边界设计的十条原则。
+
+在 Unity 项目中引入响应式 MVVM，并不是为了把 MonoBehaviour 中的字段和方法搬到另一个类里，也不是为了让所有界面都写成复杂绑定。它的核心价值，是在 View、ViewModel、Model 和服务层之间建立稳定的状态投影与行为边界：View 只处理 Unity 组件和表现，ViewModel 表达界面状态、派生状态和用户命令，Model 保持领域事实与规则，服务层负责外部能力。UniRx 或其他响应式框架只是让这些状态变化和命令流可组合、可观察、可测试。
+
+本文围绕响应式架构与 MVVM 模式展开，核心论点是：Unity MVVM 的成败不取决于是否使用 `ReactiveProperty`，而取决于边界是否清楚、状态是否单向投影、命令是否封装行为、绑定生命周期是否可控、测试是否能脱离场景运行。文章先分析传统巨型 MonoBehaviour 的耦合根源；再解释 MVVM 三层职责、响应式状态、命令、服务接口、双向绑定和可测试性的核心原理；随后提出登录、商城、背包、列表、弹窗、导航和渐进迁移的设计方案；最后讨论 MVVM 的适用边界、性能风险和团队规范。目标是让响应式 MVVM 成为 Unity UI 架构的工程工具，而不是新的形式化负担。
 
 ## 正文
 
 ### 背景
-在传统的 Unity 开发中，我们经常会遇到"巨型 MonoBehaviour"的问题——一个脚本包揽了数据管理、UI 逻辑、网络请求、动画控制等所有职责。这导致代码耦合严重、难以测试、团队协作效率低下。
 
-MVVM（Model-View-ViewModel）模式的引入，将应用程序拆分为更小的、职责单一的组件，从而提高代码质量和开发效率。结合响应式编程（如 UniRx），我们可以实现声明式的数据绑定，让 ViewModel 数据变化自动驱动 View 更新。
+#### 一、巨型 MonoBehaviour 的问题不是文件太长，而是职责没有边界
 
-### 1. 为什么选择 MVVM？
+Unity 的开发入口天然以场景对象和组件为中心。一个界面脚本很容易同时持有按钮、文本、网络服务、配置表、动画、音效、数据缓存和业务判断。起初这种写法很快：拖引用、写回调、改 Text、调接口。问题在界面变复杂后出现。登录界面要处理输入校验、登录中状态、错误提示、自动登录、协议勾选、游客入口；背包界面要处理筛选、排序、虚拟列表、选中详情、出售、合成、红点；商城界面要处理分页、库存、价格、支付、限购、刷新和异常恢复。一个脚本承担所有职责后，任何修改都可能影响其他路径。
 
-MVVM 是一种用于构建用户界面的架构模式，它将应用程序划分为三个核心部分：
+所谓巨型 MonoBehaviour 的本质，不是代码行数超过某个阈值，而是 UI 表现、界面状态、业务规则、异步流程和外部服务被写在同一个对象里。它导致测试困难，因为逻辑依赖场景和组件；复用困难，因为业务状态和具体控件绑定在一起；协作困难，因为布局、表现和业务修改都冲突在同一脚本；定位困难，因为用户操作的状态变化散落在多个回调中。
 
-- **Model（模型）：** 负责应用程序的**数据和业务逻辑**。它独立于 UI，可以包含数据获取、存储、验证、业务规则等。Model 不关心 View 和 ViewModel 的存在，它只关注数据本身。
-- **View（视图）：** 负责显示 UI 界面。它通常由 Unity 的 UI 组件（Canvas, Button, Text 等）构成。View 仅负责**展示数据和接收用户输入**，它不包含业务逻辑，只知道如何把数据绑定到 UI 上以及如何把 UI 事件传递出去。
-- **ViewModel（视图模型）：** 连接 View 和 Model 的桥梁。它负责将 Model 的数据转换为 View 可以展示的格式，并将 View 的用户输入转换为 Model 可以处理的命令。ViewModel 不直接操作 View，而是通过**数据绑定**来驱动 View 的更新。
+MVVM 要解决的正是这种职责混合。它不保证代码自动变少，但能让不同类型的变化落在不同层里。布局变化主要影响 View，业务规则变化主要影响 Model 或服务，界面状态变化主要影响 ViewModel，外部能力变化通过接口替换。架构价值来自可替换和可测试，而不是来自命名形式。
 
-**MVVM 的核心优势：**
+#### 二、响应式编程让 ViewModel 更适合表达“随时间变化的界面状态”
 
-1. **关注点分离：** 将数据逻辑、展示逻辑和 UI 表现彻底分离。
-2. **可测试性：** ViewModel 是纯 C# 类，不依赖 MonoBehaviour，可以脱离 Unity 环境做单元测试。
-3. **可维护性：** 变更只影响受影响的部分：改布局只动 View，改业务只动 Model，改展示只动 ViewModel。
-4. **团队协作：** 美术、UI 设计师、开发者可以并行工作。
+ViewModel 的职责是把业务状态转换成界面可展示状态，并把用户输入转换成业务命令。Unity UI 的很多状态天然会随时间变化：输入框内容、按钮是否可点击、加载中遮罩、错误提示、列表筛选结果、红点显示、货币余额、选中详情。响应式属性和操作符可以把这些关系写成派生流，而不是在每个回调中手动同步。
 
-### 2. Unity 中的响应式 MVVM 实现
+例如登录按钮是否可点击，不只是用户名和密码非空，还可能取决于协议勾选、网络状态、是否正在请求、账号是否被锁定。用响应式组合表达时，`CanLogin` 是一个可观察的派生状态；View 只绑定按钮可交互状态，不需要知道判断细节。这样的代码更接近界面语义。
 
-#### 2.1 ViewModel 基本结构
+但响应式编程也会放大边界错误。如果 ViewModel 直接操作 `GameObject`、`Animator`、`Text`，它就重新依赖 Unity；如果 Model 暴露可写 `ReactiveProperty` 给 View，UI 就能绕过业务规则；如果 View 里写大量业务判断，MVVM 只剩下空壳。因此，响应式 MVVM 的核心不是“哪里都用流”，而是让流服务于层次边界。
 
-基于 UniRx 的 ViewModel 包含以下核心元素：
+#### 三、Unity MVVM 与传统桌面 MVVM 不完全相同
+
+桌面或移动框架常有成熟数据绑定系统，Unity 传统 UGUI 并没有同等内置绑定能力。Unity 的 View 还承担很多引擎相关职责：播放动画、设置 GameObject 激活、处理粒子、操作 RectTransform、响应生命周期、绑定 Addressables 资源、处理对象池 Item。把这些全部从 View 中移走并不现实，也不一定正确。
+
+因此，Unity MVVM 应采取务实边界。ViewModel 保持纯 C#，尽量不依赖 UnityEngine；View 负责把 ViewModel 状态投影到 Unity 控件；动画、音效、特效、布局和组件状态属于表现层；导航、弹窗、资源、网络通过接口抽象给 ViewModel 使用。这样既保留可测试性，也尊重 Unity 的表现系统。
+
+#### 四、MVVM 的价值要通过测试和迁移兑现
+
+如果 ViewModel 仍然不能离开场景测试，MVVM 的收益就很有限。如果每个界面都强行拆成多个类却没有减少耦合，架构反而增加维护成本。判断 MVVM 是否落地成功，可以看两个问题：第一，关键状态和命令能否用纯 C# 单元测试验证；第二，View 是否可以在不改业务逻辑的情况下替换布局、控件或表现。
+
+这也意味着 MVVM 不应一次性覆盖所有界面。简单一次性弹窗可以保持轻量脚本；复杂数据界面、强交互界面、高复用组件、多人协作频繁修改的界面，才最适合完整 MVVM。架构模式应按收益使用。
+
+### 核心原理
+
+#### 一、Model 表达领域事实，不表达界面细节
+
+Model 层代表业务事实和规则。账号、角色、背包、任务、商城库存、支付状态、配置约束、权限规则，都属于领域层关注。Model 可以包含状态，也可以包含行为，但不应知道某个 Text 如何显示、某个按钮是否灰掉、某个红点节点在哪个 Canvas 下。
+
+一个常见错误是把 Model 写成一组可写 `ReactiveProperty`，然后让 View 或 ViewModel 随意修改。这样虽然看起来响应式，实际破坏了领域边界。Model 应通过领域方法或服务接口维护状态一致性，例如购买需要校验库存、货币、限购和支付状态，而不是让 UI 直接改“已购买”字段。
+
+ViewModel 可以订阅 Model 或服务暴露的只读状态，把领域事实转换成界面文本、可见性、按钮状态和错误提示。这个转换层是 MVVM 的价值所在：View 不必理解全部业务，Model 不必理解 UI。
+
+#### 二、View 负责表现和输入，不负责业务决策
+
+View 是 Unity 组件世界的入口。它持有 `Button`、`Text`、`InputField`、`Toggle`、`Animator`、`GameObject` 等对象，负责绑定状态、监听输入、播放表现和释放订阅。View 可以知道如何显示加载中、如何把错误文本写到控件、如何启用按钮、如何播放打开动画，但不应决定登录规则、购买规则或任务完成规则。
+
+View 的理想职责是“投影”和“转发”。投影指把 ViewModel 的状态渲染成控件表现；转发指把用户输入转成 ViewModel 命令或输入属性。View 中可以有少量表现逻辑，例如根据状态播放不同动画，但业务判断应留在 ViewModel 或服务层。
+
+如果 View 里开始写“余额是否足够”“库存是否可买”“任务是否可领奖”的判断，就说明边界已经被侵蚀。短期看这很方便，长期会让同一业务规则散落在多个界面。
+
+#### 三、ViewModel 是界面状态机，不是 MonoBehaviour 的替身
+
+ViewModel 不是把 MonoBehaviour 字段搬到纯 C# 类里。它应表达一个界面的状态机：输入是什么，输出状态是什么，派生状态如何计算，用户能执行哪些命令，命令执行期间状态如何变化，失败如何呈现，成功后产生什么导航或业务结果。
+
+例如登录 ViewModel 可以包含用户名草稿、密码草稿、协议勾选、是否登录中、错误消息、登录按钮可执行状态、登录命令。它不需要知道登录按钮的具体 GameObject，也不需要直接播放加载动画。加载动画由 View 根据 `IsLoggingIn` 决定。
+
+ViewModel 的状态应尽量可观察、可测试、可组合。它对外暴露只读状态，内部维护可写属性；对外暴露命令，内部处理服务调用、并发控制和错误转换。这样 View 只能绑定和执行，不能随意破坏状态。
+
+#### 四、命令是用户行为的边界
+
+MVVM 中的命令不仅是按钮回调包装。它是用户行为的入口，也是并发、权限、错误和状态变化的封装点。登录、购买、刷新、领取、保存、删除、确认、取消，都应通过命令表达。
+
+命令应回答几个问题：什么时候可执行，执行期间是否禁止重入，失败如何变成界面状态，成功是否触发导航，取消如何处理，重复点击是否合并或忽略。若这些问题散落在 View 的按钮回调中，ViewModel 就失去了控制行为边界的意义。
+
+响应式命令可以把可执行状态和执行流连接起来。按钮只绑定命令，命令内部根据状态决定是否执行。这样用户行为不再是零散事件，而是可测试的状态转移。
+
+#### 五、服务接口让 ViewModel 保持可测试
+
+ViewModel 需要调用网络、存储、导航、弹窗、资源、支付、埋点等能力。如果直接引用具体 Unity 管理器或单例，它就很难测试。服务接口的作用是把外部能力抽象成可替换依赖。运行时注入真实实现，测试时注入模拟实现。
+
+导航和弹窗尤其容易破坏边界。ViewModel 确实可能需要“登录成功后进入主页”或“删除前确认”。但它不应直接操作场景加载或弹窗 GameObject，而应调用 `INavigationService`、`IDialogService` 之类接口。这样 ViewModel 仍然表达业务意图，而不是表现细节。
+
+#### 六、双向绑定需要来源控制
+
+输入框、滑条和 Toggle 经常需要双向绑定。用户输入更新 ViewModel，ViewModel 状态又更新控件。如果没有去重或静默设置，就会形成循环通知。Unity 控件初始化时也可能触发事件，导致绑定刚建立就执行业务逻辑。
+
+双向绑定应区分输入草稿和已提交状态。表单编辑阶段，ViewModel 保存草稿；点击提交后才校验并写入 Model。控件初始化时应使用不触发通知的设置方法，或先设置初始值再建立订阅。响应式双向绑定不是无脑互相订阅，而是受控同步。
+
+### 设计思路
+
+#### 一、从界面状态图开始设计 ViewModel
+
+设计 ViewModel 前，应先写出界面状态图：有哪些输入，有哪些输出，哪些输出由哪些输入派生，哪些用户命令会改变状态，命令执行期间有哪些中间状态，失败如何呈现，成功后产生什么结果。状态图清楚后，ReactiveProperty、ReadOnlyReactiveProperty 和 ReactiveCommand 才有落点。
+
+例如登录界面的状态可以分为空输入、可提交、登录中、失败、成功导航。购买界面可以分为不可买、可买、确认中、支付中、成功、失败、库存变化。若不先设计状态，ViewModel 很容易变成字段仓库。
+
+#### 二、ViewModel 对外暴露只读状态
+
+ViewModel 内部可以维护可写属性，对 View 应尽量暴露只读状态。View 不应直接修改 `IsLoading`、`ErrorMessage`、`CanBuy` 这类输出状态。View 可以把输入事件写入输入属性，也可以执行命令，但不应跳过命令改业务结果。
+
+只读暴露能保护状态一致性。比如 `CanBuy` 来自库存、货币和请求状态，View 不应直接设为 true；错误消息来自命令失败，View 不应随意清空；加载状态来自异步流程，View 不应提前关闭。状态所有权清楚后，调试更容易。
+
+#### 三、按 UI 区域拆分子 ViewModel
+
+复杂界面不适合所有状态堆在一个 ViewModel 中。背包可以拆成筛选栏、列表、详情、操作区；商城可以拆成分页、商品卡、货币栏、购买确认；角色界面可以拆成属性、装备、技能、预览。拆分后，每个子 ViewModel 负责局部状态，父 ViewModel 负责协调跨区域关系。
+
+拆分的关键不是类越多越好，而是数据流方向清楚。子 ViewModel 可以向父级暴露选择事件或命令结果，父级再更新其他区域。子 ViewModel 不应随意引用兄弟模块并修改状态，否则会形成隐式耦合。
+
+#### 四、列表使用 ItemViewModel 和差量更新
+
+大型列表是 MVVM 的高风险场景。如果每次数据变化都重建所有 Item，或者每个 Item 绑定过多属性而没有虚拟化，性能会迅速下降。列表应使用差量集合、可见区域虚拟化和 ItemViewModel。
+
+ItemViewModel 表达单个条目的显示状态和命令，例如名称、图标、数量、是否选中、是否可操作。列表 View 根据差量创建、复用或释放 Item View。这样列表刷新不需要全量重绑，Item 生命周期也更清楚。
+
+#### 五、命令内部统一处理并发和错误
+
+按钮防连点不应只在 View 里禁用按钮。命令层应知道自己是否正在执行，是否允许并发，是否取消旧请求，失败如何转成错误状态。View 绑定 `CanExecute` 和 `IsExecuting`，而不是自己维护一套并发逻辑。
+
+对于关键事务，如购买、保存和领奖励，命令还应处理幂等、重试和最终状态确认。View 只负责展示，不负责保证业务流程正确。
+
+#### 六、导航和弹窗通过服务或事件流表达
+
+ViewModel 触发页面跳转和弹窗是合理需求，但要避免直接依赖具体 UI 系统。可以通过导航服务接口、对话框服务接口，或一次性 UI 事件流表达。服务方式适合请求-响应型行为，例如确认弹窗；事件流适合 Toast、轻提示、导航意图等一次性输出。
+
+选择哪种方式取决于项目框架。核心原则是 ViewModel 表达意图，View 或 UI 框架执行表现。
+
+#### 七、生命周期绑定留在 View 层
+
+ViewModel 负责状态和命令，View 负责 Unity 生命周期。View 订阅 ViewModel 状态时，应把订阅绑定到 View 的打开周期或绑定周期。ViewModel 自身若持有长期订阅，也应有明确 Dispose。不要让 ViewModel 捕获 View，也不要让 View 的订阅残留跨越关闭周期。
+
+这条边界能避免最常见的 MVVM 泄漏：ViewModel 生命周期长于 View，却在闭包中持有 View 控件。
+
+### 进阶讨论
+
+#### 一、MVVM 不是所有界面的默认答案
+
+简单确认弹窗、一次性提示、纯表现动画面板，使用完整 MVVM 可能成本大于收益。MVVM 最适合状态复杂、交互复杂、需要测试、需要复用、多人协作频繁修改的界面。架构模式应服务复杂度，而不是制造复杂度。
+
+项目可以制定分级策略：轻量弹窗使用简单 Presenter 或脚本；中等表单使用 ViewModel；大型数据界面使用完整 MVVM、子 ViewModel 和列表虚拟化。这样既保持一致性，又不会把简单问题复杂化。
+
+#### 二、ViewModel 过大意味着边界再次失效
+
+一个 ViewModel 如果拥有几十个属性、十几个命令和大量私有流程，很可能变成新的巨型类。它虽然脱离了 MonoBehaviour，却仍然承担过多职责。解决方式不是回到 View，而是拆分子 ViewModel、领域服务和命令对象。
+
+ViewModel 的大小应由界面状态边界决定。一个区域、一个列表、一个复杂表单、一个确认流程，都可以成为独立单元。
+
+#### 三、响应式属性不是领域模型的通用字段
+
+把所有 Model 字段都改成 `ReactiveProperty`，会让领域层被 UI 需求污染。领域模型应先保证业务一致性，再考虑如何通知变化。只读 Observable、领域事件、快照加版本号、差量事件都可能比可写 ReactiveProperty 更适合。
+
+响应式是传播机制，不是领域建模本身。领域规则仍应由领域方法和服务维护。
+
+#### 四、错误处理应成为状态，而不是临时弹窗
+
+很多界面把错误处理写成 catch 后弹 Toast。这样测试困难，也容易漏掉错误状态。ViewModel 应把错误转换成明确状态：字段错误、全局错误、可重试错误、阻断错误、业务失败、系统异常。View 根据状态显示文本、弹窗或重试按钮。
+
+错误作为状态后，命令测试可以覆盖失败路径，UI 也能保持一致。临时弹窗可以作为表现层输出，但不应替代错误建模。
+
+#### 五、双向绑定的替代方案是单向数据流加提交
+
+复杂表单中，双向绑定容易产生循环和中间态污染。更稳妥的方式是把输入作为草稿状态，所有草稿只在 ViewModel 内部存在；点击提交后校验并写入 Model。取消编辑时丢弃草稿。这样业务层不会看到无效输入，View 也不需要处理复杂同步。
+
+这种方式牺牲了一点即时同步，却换来更清晰的事务边界。
+
+#### 六、性能问题主要来自绑定粒度和列表规模
+
+MVVM 的性能风险通常不是单个 ReactiveProperty，而是大量绑定、高频刷新、列表重建和字符串临时分配。倒计时不必每帧刷新文本，列表不应全量重建，复杂筛选应防抖，红点应按依赖分区更新。
+
+绑定粒度需要按 UI 结构设计。太细会增加订阅数量，太粗会造成过度刷新。性能优化应从结构入手，而不是简单否定 MVVM。
+
+#### 七、测试应覆盖命令序列，而不只是初始状态
+
+ViewModel 测试的重点是状态转移。输入无效时命令不可执行；输入有效后可执行；执行中按钮禁用；失败后错误显示；成功后导航意图产生；取消后不再写回；重复点击不会并发提交。这些比“默认字段是否正确”更有价值。
+
+测试能反过来检验边界。如果测试必须启动场景或创建真实 Button，说明 ViewModel 依赖了表现层。
+
+#### 八、实现方案：登录 ViewModel 的最小骨架
+
+下面示例只展示结构，不追求完整实现：
 
 ```csharp
-using UniRx;
-using System;
-
-public class LoginViewModel
+public sealed class LoginViewModel
 {
-    // 输入属性
-    public ReactiveProperty<string> Username = new ReactiveProperty<string>("");
-    public ReactiveProperty<string> Password = new ReactiveProperty<string>("");
-
-    // 状态属性
-    public ReactiveProperty<bool> IsLoggingIn = new ReactiveProperty<bool>(false);
-    public ReactiveProperty<string> ErrorMessage = new ReactiveProperty<string>("");
-
-    // 派生属性 - 至少输入了内容才能点击登录
-    public IReadOnlyReactiveProperty<bool> CanLogin;
-
-    // 命令
-    public ReactiveCommand LoginCommand { get; private set; }
-
-    private IAuthService _authService;
-
-    public LoginViewModel(IAuthService authService)
-    {
-        _authService = authService;
-
-        // 派生属性：用户名和密码都不为空时可登录
-        CanLogin = Observable.CombineLatest(
-            Username.Select(u => !string.IsNullOrEmpty(u)),
-            Password.Select(p => !string.IsNullOrEmpty(p)),
-            (hasUser, hasPwd) => hasUser && hasPwd && !IsLoggingIn.Value
-        ).ToReactiveProperty();
-
-        // 命令绑定可执行状态
-        LoginCommand = new ReactiveCommand(CanLogin);
-        LoginCommand.Subscribe(_ => OnLogin());
-    }
-
-    private async void OnLogin()
-    {
-        IsLoggingIn.Value = true;
-        ErrorMessage.Value = "";
-
-        try
-        {
-            var result = await _authService.LoginAsync(Username.Value, Password.Value);
-            if (!result.Success)
-                ErrorMessage.Value = result.Error;
-        }
-        catch (Exception e)
-        {
-            ErrorMessage.Value = $"网络错误: {e.Message}";
-        }
-        finally
-        {
-            IsLoggingIn.Value = false;
-        }
-    }
+    public ReactiveProperty<string> Username { get; } = new("");
+    public ReactiveProperty<string> Password { get; } = new("");
+    public IReadOnlyReactiveProperty<bool> CanLogin { get; }
+    public ReactiveCommand Login { get; }
 }
 ```
 
-#### 2.2 View 绑定
+这个骨架的重点是把输入、派生状态和命令分开。真实项目中还应加入执行中状态、错误状态、服务注入、生命周期释放和测试。
+
+#### 九、实现方案：View 只做绑定
+
+View 绑定 ViewModel 时，应避免业务判断：
 
 ```csharp
-using UnityEngine;
-using UnityEngine.UI;
-using UniRx;
-
-public class LoginView : MonoBehaviour
-{
-    public InputField usernameInput;
-    public InputField passwordInput;
-    public Button loginButton;
-    public Text errorText;
-    public GameObject loadingIndicator;
-
-    private LoginViewModel _viewModel;
-
-    public void Bind(LoginViewModel viewModel)
-    {
-        _viewModel = viewModel;
-
-        // View -> ViewModel（双向绑定的输入方向）
-        usernameInput.OnValueChangedAsObservable()
-            .Subscribe(val => viewModel.Username.Value = val)
-            .AddTo(this);
-        passwordInput.OnValueChangedAsObservable()
-            .Subscribe(val => viewModel.Password.Value = val)
-            .AddTo(this);
-
-        // ViewModel -> View（状态驱动 UI 更新）
-        viewModel.ErrorMessage
-            .Subscribe(msg => errorText.text = msg)
-            .AddTo(this);
-
-        viewModel.IsLoggingIn
-            .Subscribe(loading => loadingIndicator.SetActive(loading))
-            .AddTo(this);
-
-        // 绑定按钮到命令
-        loginButton.OnClickAsObservable()
-            .BindTo(viewModel.LoginCommand)
-            .AddTo(this);
-    }
-}
+viewModel.CanLogin
+    .Subscribe(can => loginButton.interactable = can)
+    .AddTo(_bindings);
 ```
 
-这种模式让 View 变成了 ViewModel 的投影。UI 控件的状态完全由 ViewModel 的数据驱动，而不是通过查找组件或 GetComponent 手动更新。
+按钮是否可点击由 ViewModel 决定，View 只投影到控件。这样规则变化时无需修改 View。
 
-### 3. 依赖注入与服务层
+#### 十、实现方案：服务接口隔离外部能力
 
-MVVM 的可测试性关键：ViewModel 不自己实例化服务，而是通过**依赖注入**获取。
+登录、导航和弹窗都应通过接口进入 ViewModel：
 
 ```csharp
-// 服务接口
 public interface IAuthService
 {
-    IObservable<LoginResult> LoginAsync(string username, string password);
-}
-
-// 使用方式
-public class LoginViewModel
-{
-    private readonly IAuthService _authService;
-    private readonly INavigationService _navigationService;
-
-    public LoginViewModel(IAuthService auth, INavigationService nav)
-    {
-        _authService = auth;
-        _navigationService = nav;
-    }
+    IObservable<LoginResult> Login(string user, string password);
 }
 ```
 
-测试时可以这样注入模拟服务：
+测试时可以用假服务返回成功、失败、延迟和异常。ViewModel 不依赖真实网络，也不依赖 Unity 场景。
 
-```csharp
-[Test]
-public void TestLoginFailureShowsError()
-{
-    var mockAuth = new MockAuthService(returnSuccess: false);
-    var mockNav = new MockNavigationService();
-    var vm = new LoginViewModel(mockAuth, mockNav);
+#### 十一、渐进迁移策略
 
-    vm.Username.Value = "test";
-    vm.Password.Value = "123";
-    vm.LoginCommand.Execute();
+已有项目可以从最痛的界面开始迁移。优先选择逻辑复杂、测试困难、反复改动的界面。第一步把业务判断从 View 抽到 ViewModel；第二步把外部调用接口化；第三步把状态改成可观察；第四步补充命令测试；最后再拆分子 ViewModel。
 
-    Assert.IsFalse(string.IsNullOrEmpty(vm.ErrorMessage.Value));
-}
-```
+渐进迁移避免了“一次性重构所有 UI”的风险，也能让团队在真实界面中形成模板。
 
-### 4. 组件化与层级通信
+#### 十二、验收标准
 
-复杂界面中，View 和 ViewModel 不一定是 1:1 关系。一个主面板可以拆成多个子 ViewModel：
+一个响应式 MVVM 界面应满足：ViewModel 不引用 Unity 控件；View 不写业务规则；Model 不知道 UI；服务通过接口注入；用户操作通过命令；输出状态尽量只读；绑定有生命周期 owner；复杂列表使用差量和复用；错误是可测试状态；关键命令序列有单元测试；简单界面没有被过度架构化。
 
-```csharp
-public class MainPanelViewModel
-{
-    public PlayerViewModel Player { get; private set; }
-    public InventoryViewModel Inventory { get; private set; }
-    public QuestViewModel Quests { get; private set; }
+如果这些标准无法满足，MVVM 可能只停留在文件拆分层面。
 
-    public MainPanelViewModel(IPlayerService player, IInventoryService inv)
-    {
-        Player = new PlayerViewModel(player);
-        Inventory = new InventoryViewModel(inv);
-        Quests = new QuestViewModel();
-    }
-}
-```
 
-子 ViewModel 之间的通信通过父 ViewModel 协调，或通过消息总线（MessageBroker）实现。不应让子 ViewModel 直接操作兄弟模块的状态。
+#### 十三、区分状态输出和一次性事件输出
 
-### 5. 工程化深化：Unity MVVM 的边界设计
+ViewModel 对外输出不全是状态。按钮可点击、加载中、错误文本、选中项、列表数据属于状态，订阅者晚一点订阅也应能拿到当前值；Toast、页面跳转、播放一次动画、打开一次确认框，则更像一次性事件，晚订阅者不应重复收到旧事件。若把一次性事件也写成普通状态，就会出现界面重新绑定后重复弹窗或重复导航；若把长期状态写成一次性事件，View 重建后又会丢失当前界面表现。
 
-#### 5.1 ViewModel 不是 MonoBehaviour 的搬家
-很多团队初次实践 MVVM 时，会把原本写在 MonoBehaviour 里的字段和方法搬到 ViewModel，但依然让 ViewModel 直接操作 GameObject、Transform、Animator 或 AudioSource。这样只是换了文件名，并没有获得可测试性和解耦收益。ViewModel 应主要表达界面状态、用户命令和业务交互结果；具体控件、动画和 Unity 对象仍由 View 负责。
+因此，ViewModel 契约应明确区分 `State` 与 `Event`。状态可以用只读属性或可重放流表达，一次性事件可以用受控 Subject、消息队列或服务调用表达。这个区别对 Unity 尤其重要，因为界面经常关闭重开、隐藏显示、对象池复用。契约不清，MVVM 的边界会在重绑时被破坏。
 
-边界清楚后，ViewModel 可以脱离 Unity 场景做单元测试，View 也可以替换皮肤或布局。
+#### 十四、Presenter 与 MVVM 可以共存
 
-#### 5.2 Model 层应保持领域语义
-Model 不是简单的数据结构集合，它代表业务事实和规则。账号状态、角色属性、背包数据、任务进度都可以是 Model，但 Model 不应知道某个 Text、Button 或红点节点如何刷新。若 Model 直接暴露可写 ReactiveProperty 给 UI，UI 就可能绕过服务层修改业务状态。
+Unity 项目中并非所有界面都需要严格 MVVM。有些界面更适合 Presenter 或 Controller：它们只做简单事件转发和表现控制，没有复杂状态派生。完整 MVVM 可以用于复杂状态界面，轻量 Presenter 可以用于一次性弹窗、简单提示和纯表现组件。两者共存并不矛盾，前提是团队明确选择标准。
 
-推荐 Model 提供领域方法或只读状态，ViewModel 负责把它转换成界面可绑定形式。这种转换层让界面状态成为可维护的投影，而不是让 View 直接理解所有业务细节。
-
-#### 5.3 命令是 ViewModel 的行为边界
-ViewModel 不应只暴露一堆属性，还应通过命令表达用户可以做什么。登录、购买、领取、刷新都可以是命令。命令内部可以调用服务、更新状态、处理错误和控制并发。这样 View 只需要绑定按钮到命令，而不需要知道业务流程。
-
-命令还可以统一处理可执行状态。比如购买按钮是否可点，取决于余额、库存、网络状态和是否正在请求；这些判断集中在 ViewModel 命令中，比散落在多个按钮脚本里更安全。
-
-#### 5.4 双向绑定要谨慎使用
-输入框和滑条常需要双向绑定，但双向绑定也容易形成循环。用户输入更新 ViewModel，ViewModel 格式化后又更新输入框，输入框再次触发事件。如果没有去重、来源标记或静默设置方法，就会产生重复通知。
-
-对于复杂表单，建议区分草稿状态和已提交状态。输入框绑定草稿属性，点击提交命令后校验并写入业务 Model。这样既能支持取消编辑，也能避免无效中间态污染业务层。
-
-#### 5.5 导航和弹窗不应散落在 ViewModel 各处
-ViewModel 经常需要触发页面跳转、弹窗确认、Toast 提示等表现行为。如果直接引用具体 UI 管理器，ViewModel 会重新依赖 Unity。可以通过导航服务接口、对话框服务接口或一次性 UI 事件流表达这些需求。测试时注入假的服务，运行时由 View 实现。
-
-例如登录成功后，ViewModel 调用 `INavigationService.GoToHome()`，而不是直接加载场景。需要确认删除时，ViewModel 发起 `IDialogService.Confirm`，根据结果继续执行命令。
-
-#### 5.6 MVVM 的性能问题主要来自绑定粒度
-如果每个小字段都单独订阅，界面复杂后订阅数量会很大；如果整块数据用一个属性更新，又会导致过度刷新。绑定粒度需要按 UI 结构设计。稳定文本和按钮状态可以单独属性；大型列表应使用差量集合和虚拟化；复杂面板可以按区域拆分子 ViewModel。
-
-ViewModel 不应频繁创建临时字符串和对象。倒计时文本可以节流到秒级刷新；数据变化可以在稳定后刷新；列表筛选可以使用防抖。MVVM 强调可观察状态，但不要求所有状态毫无节制地实时广播。
-
-#### 5.7 可测试性要覆盖状态和命令序列
-MVVM 的收益要通过测试兑现。ViewModel 测试可以不启动 Unity 场景，直接设置输入属性、执行命令、断言状态变化。登录失败时错误提示是否更新、登录中按钮是否禁用、取消请求后是否不跳转、表单无效时命令是否不可执行，这些都适合单元测试。
-
-测试时应避免依赖真实网络、真实资源和真实时间。服务通过接口注入，异步流程使用可控任务，这样 ViewModel 才真正与表现层分离。
-
-#### 5.8 团队协作中要统一绑定规范
-MVVM 项目如果没有规范，很容易出现多种写法并存。团队应统一命名、生命周期、绑定方式、命令封装、错误处理和释放策略。规范不必复杂，但必须一致。
-
-可以建立模板：每个界面包含 View、ViewModel、可选 Model Adapter；View 只处理 Unity 组件和表现；ViewModel 暴露只读状态和命令；订阅绑定到 View 生命周期；列表项有独立 ItemViewModel；命令错误通过统一通道返回。
-
-#### 5.9 复杂界面应拆分为子 ViewModel
-大型界面如果只有一个 ViewModel，很快会积累几十个属性和命令，最终变成新的复杂脚本。背包界面可以拆成筛选栏、列表、详情、操作区；角色界面可以拆成属性、装备、技能、预览；商城界面可以拆成分页、商品卡、购买确认和货币栏。
-
-拆分的关键是数据流方向清晰。子 ViewModel 可以向父级报告选择变化或命令结果，但不应随意修改兄弟模块状态。跨区域联动由父级协调，或通过明确的服务完成。
-
-#### 5.10 MVVM 落地应允许渐进迁移
-已有项目不适合一次性把所有界面改成 MVVM。可以先从高复杂度、高复用、高维护成本的界面开始：登录、背包、商城、任务、设置。新界面按 MVVM 模板写，旧界面逐步把业务状态抽到 ViewModel。渐进迁移能降低风险，也能让团队在真实问题中调整规范。
-
-迁移时不要追求形式统一而牺牲稳定性。简单一次性弹窗可以保持轻量脚本；复杂数据界面使用完整 MVVM。架构模式服务项目，不是反过来让项目服从模式。
-
-### 实现方案
-
-1. **建造 ViewModel 骨架**：每个界面层建立对应的 ViewModel，包含输入属性（ReactiveProperty）、输出属性（IReadOnlyReactiveProperty）、派生属性和命令（ReactiveCommand）。
-
-2. **注入而非实例化**：ViewModel 所需的服务通过构造函数注入（IAuthService、INavigationService 等），保持纯 C# 可测试性。
-
-3. **View 只做绑定**：View 脚本不包含业务逻辑，只负责将 ViewModel 属性绑定到 UI 控件，将 UI 事件绑定到 ViewModel 命令。
-
-4. **子 ViewModel 拆分**：复杂面板按区域拆分为多个子 ViewModel，由父 ViewModel 协调数据流。
-
-5. **命令封装业务流**：所有用户操作通过命令封装，内部统一处理并发、错误和状态更新。
-
-6. **双向绑定去重**：输入框双向绑定使用 `SetTextWithoutNotify` 或惰性更新策略，避免循环通知。
-
-7. **服务接口化**：导航、弹窗、网络请求等统一通过服务接口暴露，测试时注入 Mock 实现。
-
-8. **绑定粒度优化**：按 UI 结构设计订阅粒度，高频字段节流/防抖，大型列表使用响应式集合+虚拟化。
-
-9. **渐进迁移策略**：新界面按 MVVM 模板实现，旧界面从最复杂处开始逐步提取 ViewModel。
-
-10. **统一规范与模板**：团队建立 MVVM 书写模板、命名规范和生命周期的管理约定，确保一致性。
+这种务实策略能避免架构宗教化。项目真正需要的是边界清楚、测试可行、维护成本低，而不是所有文件都套同一种名称。
 
 ### 总结
 
-响应式 MVVM 模式为 Unity 开发提供了清晰的架构分层，让数据驱动 UI 变得声明式、可测试、可维护。通过 UniRx 的 ReactiveProperty 和 ReactiveCommand，ViewModel 可以精确表达界面状态和用户操作，View 只需绑定即可自动响应变化。
+响应式 MVVM 的价值，是把 Unity UI 中混杂的表现、状态、业务和外部能力拆成可理解的边界。View 负责 Unity 组件和表现，ViewModel 负责界面状态机和命令，Model 负责领域事实与规则，服务层负责网络、导航、弹窗、资源等外部能力。UniRx 让这些状态和命令可以组合、观察和测试，但它不是架构本身。
 
-工程化落地时，ViewModel 的边界设计、服务接口化、绑定粒度控制和渐进迁移策略，是 MVVM 从理论走向实践的关键。掌握了这些原则，你就能构建出无论界面多复杂都保持可维护和可测试的 Unity 应用。
+落地时要警惕两种偏差：一种是只把 MonoBehaviour 搬到 ViewModel，仍然直接操作 Unity 对象；另一种是把所有界面都强行复杂化，忽视实际收益。专业做法是按界面复杂度分级使用 MVVM，在复杂数据界面中建立状态投影、命令边界、服务接口、生命周期绑定和测试，在简单界面中保持轻量。
+
+最终判断标准不是用了多少 `ReactiveProperty`，而是界面规则能否集中表达，用户行为能否被命令测试，View 能否替换表现，Model 是否保持领域语义，生命周期是否可控。做到这些，响应式 MVVM 才真正提升 Unity 项目的可维护性。
+
+## 知识缺口
+
+1. 本文以 Unity UGUI 与 UniRx 风格为主要背景，若项目使用 UI Toolkit、R3 或自研绑定框架，需要重新确认绑定生命周期和性能边界。
+2. 导航、弹窗、资源加载和支付等服务接口的具体设计，需要结合项目现有框架和平台约束制定。
+3. 大型列表、红点系统和高频刷新界面的绑定粒度，需要通过目标设备 Profiling 和基准场景验证。
+4. 渐进迁移策略应结合已有代码质量、测试覆盖和团队分工安排，不能机械套用。
 
 ## 元数据
+
 - **创建时间：** 2026-04-20 21:04
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
+- **最后更新：** 2026-05-06 00:00
+- **版本：** v2.0
 - **分类：** C#与响应式编程
-- **标签：** MVVM、UniRx、响应式编程、架构、数据绑定
-- **来源：** 已有文稿整理与深度重写
+- **标签：** MVVM, UniRx, 响应式架构, ViewModel, 数据绑定, 命令, Unity UI, 可测试性
+- **来源简注：** 基于响应式架构与 MVVM 模式主题重新编写，聚焦状态投影、行为边界、服务接口和 Unity 工程落地。
 
 ---
-*文档基于与吉良吉影的讨论，由小雅整理*
+*文档基于讨论主题重写整理*
