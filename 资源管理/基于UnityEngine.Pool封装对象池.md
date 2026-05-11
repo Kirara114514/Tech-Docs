@@ -1,273 +1,146 @@
-# 基于UnityEngine.Pool封装对象池
-
-## 摘要
-UnityEngine.Pool 提供了官方的对象池实现，但直接使用较为基础。本文介绍如何基于 UnityEngine.Pool 封装更强大的 ObjectPoolPro 工具类，实现预制体注册、预热、延迟回收等高级功能，提升开发效率和代码质量。
-
-## 正文
+# 基于 UnityEngine.Pool 封装对象池
 
 ### 背景
-在游戏开发中，我们经常需要频繁生成和销毁游戏对象，如子弹、敌人、特效等。每次都通过 `Instantiate` 和 `Destroy` 会产生较大的性能开销和 GC 压力。对象池技术通过预先创建一批对象并反复利用它们来解决这个问题。
 
-然而，传统的手动维护列表方式存在诸多痛点：
+Unity 2021 之后提供了 `UnityEngine.Pool` 命名空间，其中 `ObjectPool<T>` 和 `LinkedPool<T>` 为对象池提供了官方基础实现。它们解决了很多手写池容易出错的底层问题：统一的创建回调、取出回调、归还回调、销毁回调、容量限制、重复归还检查以及清理入口。对于需要频繁创建和释放对象的 Unity 项目，直接基于这些类型构建对象池，比从零维护一个栈或列表更稳妥。
 
-- **管理复杂**：需要手动维护对象列表、检查状态，容易遗漏重置逻辑
-- **重复回收问题**：同一对象可能被多次回收，造成逻辑混乱
-- **未注册对象误用**：回收不属于池的对象时无提示，可能造成泄漏
-- **资源清理困难**：场景切换时缓存对象不自动清理
+但是，官方对象池只是基础容器，不是完整的项目级对象池系统。它并不知道某个 `GameObject` 对应哪个预制体，不知道某个池属于哪个场景，不知道对象是否来自 Addressables 或 AssetBundle，不知道项目希望按什么配置预热，也不知道回收时应如何重置 Rigidbody、ParticleSystem、Animator、TrailRenderer、Tween、事件监听和业务状态。若直接在业务代码中散落使用 `new ObjectPool<GameObject>(...)`，项目会得到许多局部池，却缺少统一治理。
 
-UnityEngine.Pool 命名空间提供了官方解决方案，帮助解决这些问题。
+因此，基于 `UnityEngine.Pool` 封装对象池的关键，不是把官方 API 包一层更短的名字，而是把“容器能力”提升为“工程能力”。官方池负责存放对象、限制容量和触发生命周期回调；项目层封装负责预制体注册、实例归属、状态重置、延迟回收、异常检测、统计观测、配置加载、资源句柄管理和场景清理。两层职责如果混在一起，封装会变得臃肿；如果完全分离，业务又会反复写重复逻辑。
 
-### 1. UnityEngine.Pool.ObjectPool 核心
+一个成熟的封装方案需要回答几个问题。第一，业务如何根据预制体或资源键获取对象，而不是直接持有底层池。第二，对象归还时如何确认它确实来自某个已注册池。第三，取出和回收时如何执行项目统一的状态重置。第四，预热数量和最大容量如何配置，并根据运行数据调整。第五，延迟回收、自动回收和手动回收如何避免冲突。第六，场景卸载或模块关闭时如何释放池中的对象和关联资源。第七，出现重复回收、释放外部对象、池容量不足时如何被及时发现。
 
-Unity 的 `ObjectPool<T>` 是一个基于栈实现的通用对象池，核心特性包括：
+这些问题决定了封装的方向：把 `UnityEngine.Pool` 当作可靠的底座，而不是把它暴露成业务层的直接依赖。业务层应该面对项目语义，例如“获取一个子弹实例”“回收这个特效对象”“预热某个 UI 列表项池”“清理战斗场景池”。底层是否使用 `ObjectPool<T>`、`LinkedPool<T>` 或其他结构，应当是实现细节。
 
-- **自定义创建**：通过 `Func<T> createFunc` 定义对象创建方式
-- **获取/回收回调**：`actionOnGet` 和 `actionOnRelease` 在获取和回收时自动调用
-- **最大容量限制**：`maxSize` 防止对象无限增长
-- **安全检查**：`collectionCheck` 防止重复回收和未注册对象
-- **统一清理**：`Clear()` 方法一次性清空池
+本文围绕 `GameObject` 池化展开，讨论如何基于 `UnityEngine.Pool` 封装一个面向项目使用的对象池。重点不是给出庞大的完整框架，而是解释封装边界、生命周期契约、安全检查、容量策略、延迟回收和资源归属的设计原则。对象池看起来是一个小工具，但一旦在战斗、特效、UI、怪物、弹道和资源系统中普遍使用，它就会成为项目运行稳定性的基础设施。
+
+### 核心原理
+
+`ObjectPool<T>` 的核心思想是把对象生命周期拆成四个回调：创建、取出、归还、销毁。创建回调决定池中没有可用对象时如何生成新对象；取出回调决定对象进入使用状态时需要做什么；归还回调决定对象进入空闲状态时需要做什么；销毁回调决定超过容量或清理池时如何释放对象。这个模型适合 Unity 项目，因为 `GameObject` 的复用恰好也可以分成实例化、激活、禁用和销毁四个阶段。
+
+官方池提供的价值在于统一容器行为。手写对象池时，开发者常会忘记处理重复回收、最大容量、清理销毁、默认容量、集合状态等问题。`ObjectPool<T>` 把这些底层细节收敛起来，并通过 `collectionCheck` 在开发阶段捕捉重复归还。需要注意的是，`collectionCheck` 主要用于检查对象是否已经在池中，不能替代项目层的归属校验。一个完全不属于该池的对象，仍需要项目封装通过实例映射或池令牌识别。
+
+`ObjectPool<T>` 和项目封装之间应保持分工。底层池回答“这个对象是否处于空闲集合中，以及超过容量时如何处理”；项目封装回答“这个对象属于哪个预制体、哪个场景、哪个资源句柄、哪个业务模块，以及应该怎样初始化和重置”。如果项目封装只做简单转发，那么对象池问题仍然会散落到业务层；如果项目封装试图理解所有业务字段，则会变成不可维护的巨型工具类。正确边界是封装通用生命周期和治理能力，业务状态通过接口或组件扩展。
+
+对象池封装最重要的工程原则是所有权可追踪。每次从池中取出一个实例，都应建立实例到池或实例到预制体的映射。回收时不应根据对象名称、标签、父节点或当前场景推断归属，而应通过映射确认它来自哪个池。没有归属追踪，就无法可靠处理重复回收、外部对象误回收、跨场景池混用和资源释放。归属追踪是对象池从便捷工具变成可靠基础设施的分界线。
+
+第二个原则是状态重置必须标准化。`GameObject.SetActive(false)` 只能禁用对象，不能保证对象内部状态干净。Rigidbody 可能仍有速度，粒子系统可能仍有残留粒子，Animator 可能停留在旧状态，TrailRenderer 可能保留轨迹，脚本字段可能引用旧目标，按钮事件可能重复绑定，协程和 Tween 可能继续运行。项目层封装应提供统一生命周期接口，让池化对象在取出和归还时执行自我重置。
+
+第三个原则是延迟回收必须带有有效性校验。延迟回收常用于子弹超时、特效播放结束、浮字展示结束等场景。简单写法是启动协程等待几秒后调用回收，但这会遇到对象提前回收后又被再次取出的情况。若旧协程仍然执行，就可能把新一轮使用中的对象回收。解决方法是为每次借出生成版本号或令牌，延迟回收执行前检查令牌是否仍然匹配。
+
+第四个原则是容量限制必须和销毁语义一致。`maxSize` 限制的是池中可保留的空闲对象数量或总体池容量语义，超过容量时会执行销毁回调。项目封装需要明确：超过容量的对象是立即销毁、延迟销毁、放入备用池，还是记录告警后丢弃。对于普通 `GameObject`，销毁回调通常是 `Object.Destroy`；对于 Addressables 实例，可能需要调用资源系统对应的释放方法，而不是直接 `Destroy`。资源来源不同，销毁语义也不同。
+
+第五个原则是预热不是越多越好。预热能把实例化成本提前到加载阶段，减少运行中首次生成的卡顿。但预热对象会占用内存，并可能提前加载资源。封装层应支持按配置预热，同时记录实际峰值，帮助后续调整。一个没有运行数据反馈的预热系统，容易在某些池上预热不足，在另一些池上浪费大量内存。
+
+第六个原则是调试信息应在封装层集中。业务层只知道自己借出了对象，底层 `ObjectPool<T>` 只知道空闲集合数量；只有项目封装同时知道预制体、实例、场景、资源和调用行为。因此，池统计、重复回收警告、未注册对象回收、长时间未归还、峰值数量、当前活跃数量、空闲数量等信息都应由封装层汇总。对象池一旦没有观测能力，线上性能和状态问题就会很难追踪。
+
+基于这些原则，项目层封装可以被理解为一套对象池协议。协议规定如何注册池、如何借出、如何归还、如何重置、如何清理、如何记录统计。`UnityEngine.Pool` 只是协议的执行容器。这样的分层可以避免两个极端：一端是每个业务系统都直接使用官方池，导致规则不统一；另一端是完全自写池容器，重复解决官方已经提供的底层能力。
+
+### 设计思路
+
+封装对象池的第一步是设计注册模型。对于 `GameObject` 池，最常见的键是预制体引用，也可以是资源路径、Addressables key、YooAsset location、逻辑资源 ID 或配置 ID。若项目仍以直接预制体引用为主，可以先使用 `GameObject prefab` 作为键；若项目已经采用资源系统，建议使用稳定的资源键作为外部入口，内部再保存预制体和资源句柄。键的选择会影响池的生命周期和资源释放方式。
+
+注册信息不应只有预制体，还应包含默认容量、最大容量、是否预热、所属作用域、是否允许延迟回收、是否启用调试检查、默认父节点、释放策略等。一个简化的配置可以包含 `prefab`、`defaultCapacity`、`maxSize`、`preloadCount`、`scope`。封装层读取配置后创建底层 `ObjectPool<GameObject>`，并执行预热。预热时需要先 `Get` 再 `Release`，但要注意预热过程也会触发取出和归还回调，因此回调必须能处理初始化阶段。
+
+第二步是设计池条目。项目中可以为每个预制体维护一个 `PoolEntry`，其中保存底层 `IObjectPool<GameObject>`、预制体、统计信息、作用域、父节点、最大容量和资源释放句柄。池管理器只负责查找和分发，具体的 `PoolEntry` 负责调用底层池并更新统计。这样可以避免管理器变成所有逻辑的堆积点，也便于某个池未来支持特殊策略。
+
+第三步是设计实例映射。每次 `Get` 成功后，封装层应记录 `instance -> PoolEntry`。回收时先查实例映射，再调用对应池的 `Release`。如果映射不存在，说明对象可能不是池对象、已经被回收、归属已被清理，或者来自另一个管理器。开发模式下应输出明确告警，并根据策略选择销毁或忽略。映射还可以记录借出版本、借出时间和最后一次借出位置，用于延迟回收和调试。
+
+第四步是设计生命周期接口。推荐定义一个轻量接口，例如 `IPoolLifecycle`，由池化对象上的组件实现。取出时调用 `OnPoolGet`，回收前调用 `OnPoolRelease`，真正销毁前调用 `OnPoolDestroy`。如果一个对象有多个组件需要响应，可以在根节点缓存组件列表，避免每次 `GetComponentsInChildren` 造成开销。生命周期接口的职责是清理通用状态，不应把业务初始化全部塞进去。业务参数仍应在对象取出后由调用方显式设置。
+
+第五步是设计 `ObjectPool<GameObject>` 回调。创建回调负责实例化预制体、设置父节点、默认禁用并缓存生命周期组件。取出回调负责激活对象、更新状态、调用生命周期接口。归还回调负责调用生命周期接口、停止表现、重设父节点、禁用对象。销毁回调负责调用销毁生命周期并释放实例。这里要特别注意顺序：有些组件在 `OnDisable` 中会执行逻辑，因此回收前的生命周期回调最好在 `SetActive(false)` 前执行，以便组件仍处于可访问状态。
+
+一个简化封装可以表达基本结构：
 
 ```csharp
-var pool = new ObjectPool<GameObject>(
-    createFunc: () => Instantiate(prefab),
-    actionOnGet: obj => obj.SetActive(true),
-    actionOnRelease: obj => obj.SetActive(false),
-    actionOnDestroy: Destroy,
-    collectionCheck: true,
-    defaultCapacity: 10,
-    maxSize: 100
-);
-```
-
-### 2. 封装 ObjectPoolPro 管理类
-
-基于 `ObjectPoolPro` 封装一个面向 GameObject 的池化管理工具：
-
-**功能目标**：
-- 注册预制体并预热
-- 获取/回收对象
-- 支持延迟回收
-- 内建安全检查
-
-以下是完整实现（包含中文注释）：
-
-```csharp
-using UnityEngine;
-using UnityEngine.Pool;
-using System.Collections;
-using System.Collections.Generic;
-
-public class ObjectPoolPro : MonoBehaviour
+public interface IPoolLifecycle
 {
-    [System.Serializable]
-    public class PoolConfig
+    void OnPoolGet();
+    void OnPoolRelease();
+}
+
+public sealed class PoolEntry
+{
+    private readonly ObjectPool<GameObject> _pool;
+
+    public PoolEntry(GameObject prefab, Transform root, int preload, int maxSize)
     {
-        public GameObject prefab;
-        public int preloadCount = 5;
-        public int maxSize = 50;
-    }
-
-    public List<PoolConfig> poolConfigs = new List<PoolConfig>();
-
-    private Dictionary<GameObject, IObjectPool<GameObject>> _pools;
-    private Dictionary<GameObject, GameObject> _activeObjects;
-
-    private void Awake()
-    {
-        _pools = new Dictionary<GameObject, IObjectPool<GameObject>>();
-        _activeObjects = new Dictionary<GameObject, GameObject>();
-
-        foreach (var config in poolConfigs)
-        {
-            RegisterPrefab(config.prefab, config.preloadCount, config.maxSize);
-        }
-    }
-
-    public void RegisterPrefab(GameObject prefab, int preloadCount = 0, int maxSize = 50)
-    {
-        if (_pools.ContainsKey(prefab))
-        {
-            Debug.LogWarning($"[ObjectPoolPro] 预制体 {prefab.name} 已注册");
-            return;
-        }
-
-        var pool = new ObjectPool<GameObject>(
-            createFunc: () =>
-            {
-                var instance = Instantiate(prefab);
-                instance.transform.SetParent(transform);
-                return instance;
-            },
+        _pool = new ObjectPool<GameObject>(
+            createFunc: () => Object.Instantiate(prefab, root),
             actionOnGet: obj =>
             {
                 obj.SetActive(true);
-                var recyclable = obj.GetComponent<IPoolRecyclable>();
-                recyclable?.OnGet();
+                foreach (var item in obj.GetComponentsInChildren<IPoolLifecycle>(true))
+                    item.OnPoolGet();
             },
             actionOnRelease: obj =>
             {
+                foreach (var item in obj.GetComponentsInChildren<IPoolLifecycle>(true))
+                    item.OnPoolRelease();
                 obj.SetActive(false);
-                var recyclable = obj.GetComponent<IPoolRecyclable>();
-                recyclable?.OnRelease();
+                obj.transform.SetParent(root, false);
             },
-            actionOnDestroy: Destroy,
+            actionOnDestroy: Object.Destroy,
             collectionCheck: true,
-            defaultCapacity: Mathf.Max(preloadCount, 10),
-            maxSize: maxSize
-        );
-
-        _pools[prefab] = pool;
-
-        // 预热
-        var tempList = new List<GameObject>();
-        for (int i = 0; i < preloadCount; i++)
-        {
-            tempList.Add(pool.Get());
-        }
-        foreach (var obj in tempList)
-        {
-            pool.Release(obj);
-        }
-    }
-
-    public GameObject Get(GameObject prefab)
-    {
-        if (!_pools.TryGetValue(prefab, out var pool))
-        {
-            Debug.LogError($"[ObjectPoolPro] 预制体 {prefab.name} 未注册");
-            return null;
-        }
-
-        var instance = pool.Get();
-        _activeObjects[instance] = prefab;
-        return instance;
-    }
-
-    public void Recycle(GameObject instance)
-    {
-        if (instance == null) return;
-
-        if (_activeObjects.TryGetValue(instance, out var prefab))
-        {
-            if (_pools.TryGetValue(prefab, out var pool))
-            {
-                pool.Release(instance);
-                _activeObjects.Remove(instance);
-                return;
-            }
-        }
-
-        Debug.LogWarning($"[ObjectPoolPro] 对象 {instance.name} 不属于任何已注册池");
-        Destroy(instance);
-    }
-
-    public void Recycle(GameObject instance, float delay)
-    {
-        StartCoroutine(DelayedRecycle(instance, delay));
-    }
-
-    private IEnumerator DelayedRecycle(GameObject instance, float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        if (instance != null && instance.activeInHierarchy)
-        {
-            Recycle(instance);
-        }
-    }
-
-    public void ClearAll()
-    {
-        foreach (var pool in _pools.Values)
-        {
-            pool.Clear();
-        }
-        _pools.Clear();
-        _activeObjects.Clear();
-    }
-
-    private void OnDestroy()
-    {
-        ClearAll();
-    }
-}
-
-// 池化对象生命周期接口
-public interface IPoolRecyclable
-{
-    void OnGet();    // 从池中取出时调用
-    void OnRelease(); // 回收到池时调用
-}
-```
-
-**设计要点**：
-
-1. **安全检查**：`collectionCheck = true` 自动防止重复回收
-2. **预热机制**：注册时先 Get 再 Release，创建预缓存
-3. **生命周期接口**：`IPoolRecyclable` 让池化对象在取出/回收时自动重置状态
-4. **映射追踪**：`_activeObjects` 字典追踪活跃实例的归属，回收时校验
-5. **延迟回收**：协程实现指定时间后自动回收
-6. **统一清理**：`OnDestroy` 时清空所有池
-
-### 3. 使用示例
-
-```csharp
-public class BulletSpawner : MonoBehaviour
-{
-    public ObjectPoolPro poolPro;
-    public GameObject bulletPrefab;
-
-    public void Fire()
-    {
-        var bullet = poolPro.Get(bulletPrefab);
-        bullet.transform.position = transform.position;
-        bullet.transform.rotation = transform.rotation;
-
-        // 3秒后自动回收
-        poolPro.Recycle(bullet, 3f);
-    }
-}
-
-public class Bullet : MonoBehaviour, IPoolRecyclable
-{
-    private Rigidbody _rb;
-
-    private void Awake()
-    {
-        _rb = GetComponent<Rigidbody>();
-    }
-
-    public void OnGet()
-    {
-        _rb.velocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
-    }
-
-    public void OnRelease()
-    {
-        _rb.velocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
+            defaultCapacity: preload,
+            maxSize: maxSize);
     }
 }
 ```
 
-### 实现方案
+这个示例只展示结构，不是最终生产代码。生产代码应缓存生命周期组件，避免每次取出回收都扫描；应记录实例归属；应处理资源句柄；应对重复回收和未注册回收给出可控策略；应支持延迟回收令牌。示例的价值在于说明官方池的回调如何承载项目生命周期，而不是鼓励把所有逻辑写进回调里。
 
-1. **统一注册入口**：通过 `PoolConfig` 列表在 Inspector 中配置预制体和预热数量
-2. **使用 `ObjectPool<T>` 内置安全检查**：避免重复回收和未注册对象误用
-3. **`IPoolRecyclable` 接口**：池化对象实现状态重置，生命周期自动管理
-4. **延迟回收**：协程实现，无需手写计时器
-5. **`_activeObjects` 映射**：追踪活跃实例，回收时验证归属
+第六步是设计延迟回收。延迟回收可以由池管理器提供，也可以由对象上的自动回收组件提供。无论哪种方式，都要有借出版本。管理器在 `Get` 时递增实例版本，并在映射中保存；延迟任务启动时捕获版本；任务触发时检查对象仍处于活跃映射中且版本一致，然后再回收。这样可以避免旧延迟任务误伤新借出的对象。若对象已经手动回收，延迟任务应安静失效或在调试模式下记录一次正常取消。
+
+第七步是设计作用域清理。封装层应支持全局池和场景池。全局池在整个应用生命周期中保留，适合通用 UI、通用音效和频繁跨场景复用的对象；场景池随场景创建和卸载，适合怪物、关卡特效、战斗投射物和场景交互物。对于 additive 场景，池的归属应由注册时传入的逻辑场景 ID 决定，而不是依赖当前激活场景。场景卸载时，管理器查找该作用域下的池，先处理活跃对象，再清理空闲对象，最后释放资源句柄。
+
+第八步是设计资源接入。若预制体来自 Addressables，池条目需要持有加载句柄，销毁池时释放句柄。若实例通过资源系统实例化，销毁回调也应使用对应的释放方法。封装层不能把所有对象都简单 `Destroy`，否则可能绕过资源系统的引用计数。资源接入的基本规则是：谁创建资源引用，谁负责释放；对象池借出实例时不应偷偷改变资源生命周期，清理池时必须释放自己持有的句柄。
+
+第九步是设计统计和诊断。每个池至少记录累计创建数、累计借出数、累计归还数、当前活跃数、当前空闲数、峰值活跃数、超容量销毁数、异常回收数。开发模式可以记录最后借出堆栈和最长借出时间，但正式版本要控制开销。统计数据不只是排查问题，也能反向指导预热配置。对象池如果没有统计，预热和容量就只能依赖经验。
+
+第十步是设计业务入口。业务代码不应该关心 `ObjectPool<T>` 的构造细节。推荐提供清晰入口，例如 `Get(prefab)`、`Get(resourceKey)`、`Release(instance)`、`Release(instance, delay)`、`Preload(key, count)`、`ClearScope(scope)`。入口越少，规则越容易统一。对于特殊池，如特效池、UI 池，可以在通用池之上再包一层领域接口，提供播放特效、回收飘字、创建列表项等更贴近业务的语义。
+
+### 进阶讨论
+
+基于 `UnityEngine.Pool` 封装对象池时，最重要的取舍是“薄封装”还是“项目级封装”。薄封装的优点是实现简单，几乎只把官方 API 换成项目命名；缺点是很多规则仍由调用方承担。项目级封装的优点是生命周期统一、调试统一、资源释放统一；缺点是设计成本更高，也需要维护配置和统计。中大型项目更适合项目级封装，小型 Demo 则可以保持薄封装，避免引入过度结构。
+
+另一个容易误判的点是 `collectionCheck`。它很有用，但不能被神化。开启后，官方池可以在一定程度上发现重复释放到同一池的问题，但它无法理解项目中的预制体归属、场景归属、资源归属，也无法自动判断某个外部实例是否应该进入这个池。开发阶段建议开启 `collectionCheck`，正式版本可根据性能和内存需求关闭或保留；但无论是否开启，项目层的实例映射都不应省略。
+
+`ObjectPool<T>` 与 `LinkedPool<T>` 的选择也有现实意义。`ObjectPool<T>` 通常基于栈结构，适合大多数对象复用场景，局部性好、实现直接。`LinkedPool<T>` 通过链表节点组织对象，在某些场景下可以避免数组扩容或栈容量管理问题，但也可能引入节点管理开销。对于 `GameObject` 池，实例化和组件状态通常远比容器差异更重要，因此默认选择 `ObjectPool<GameObject>` 即可。只有在明确测量发现容器行为成为瓶颈时，才需要切换。
+
+封装层还要处理父节点策略。池化对象回收后通常会挂到池根节点下，避免污染场景层级；取出时再由业务设置父节点或位置。UI 对象则更复杂，回收时需要回到隐藏根节点，取出时挂到目标布局节点，并处理 RectTransform、SiblingIndex、LayoutGroup 和 CanvasGroup。对于世界对象，回收时应重置位置、旋转、缩放或至少避免保留危险父节点。父节点策略如果不统一，场景层级会变得混乱，甚至导致对象因父节点禁用而表现异常。
+
+延迟回收和自动回收的冲突需要特别处理。一个对象可能被业务设置 5 秒后回收，又在 2 秒时命中目标手动回收，还可能在 3 秒时被重新取出。若没有版本校验，旧延迟任务会在第 5 秒把新对象回收。若没有活跃映射，手动回收后自动回收又执行，会形成重复释放。解决方案是：所有回收入口最终走同一个 `Release`；每次借出更新版本；延迟回收只在版本匹配时生效；重复释放在开发阶段报警。
+
+对象生命周期接口也不能滥用。如果所有组件都实现接口，回收时遍历大量组件，会产生额外开销。更好的方式是只让真正需要重置的组件实现接口，并在创建时缓存数组。对于简单对象，基础重置可能已经足够，例如禁用对象、重置父节点、清理速度。对于复杂对象，如子弹、特效、UI 项、怪物临时实体，应写专门的生命周期组件。封装层提供机制，具体清理仍由对象自己负责。
+
+资源系统接入是封装成败的关键。使用 Addressables 或 YooAsset 后，预制体引用往往不只是一个对象字段，而是一条资源生命周期链。池保留预制体或实例时，会让资源保持引用；池清理时若没有释放句柄，资源不会卸载；若提前释放句柄，池中实例可能还在使用资源。项目层封装必须明确资源句柄和池的关系：池创建时获得句柄，池销毁时释放句柄；实例销毁时走资源系统推荐的释放路径；场景清理时先清活跃实例，再清空闲实例，最后释放句柄。
+
+封装对象池还要避免静态全局化带来的隐患。静态入口使用方便，但会掩盖作用域和生命周期。登录场景、战斗场景、主城场景、编辑器预览场景可能不应共享同一套池。更稳妥的做法是提供一个全局服务入口，但内部按作用域管理池，或者让每个场景/模块拥有自己的池管理器。静态入口可以存在，但不能成为所有池都永久存活的理由。
+
+在性能层面，对象池封装本身也可能制造开销。每次取出都调用 `GetComponentsInChildren`、每次回收都分配临时列表、每次延迟回收都创建新的 `WaitForSeconds`、每次日志都拼接字符串，都会削弱池化收益。封装层需要避免在热路径上分配对象。生命周期组件缓存、日志等级控制、延迟任务复用、统计轻量化，都是必要的细节。对象池的目标是减少生命周期成本，不能让管理逻辑成为新的热点。
+
+测试方面，封装对象池不能只测试正常路径。正常路径是注册、取出、回收、再次取出；异常路径才是对象池质量的分水岭。应测试重复回收、回收未注册对象、超过最大容量、场景清理时仍有活跃对象、延迟回收与手动回收冲突、资源句柄释放、预热后立即清理、对象销毁后再次回收等情况。对象池属于基础设施，异常路径越清楚，业务越敢使用。
+
+还需要考虑团队协作成本。对象池封装越强，越需要文档和规范说明哪些对象适合池化、如何实现生命周期接口、回收时必须清理哪些状态、什么时候使用延迟回收、什么时候随场景清理。否则，不同系统会以不同方式使用同一个池，最终产生隐式规则冲突。对象池的代码只是系统的一半，另一半是团队可遵循的使用约定。
+
+从架构视角看，基于 `UnityEngine.Pool` 的封装应当保持可替换性。如果未来某些池需要使用自定义容器、无锁结构、资源系统专用实例池，业务层不应被迫大规模改动。只要业务入口稳定、生命周期接口稳定、统计和配置模型稳定，底层容器可以从 `ObjectPool<T>` 切换到其他实现。这也是不直接在业务层散落官方池构造代码的重要原因。
+
+最后需要承认，封装并不意味着所有对象都必须走池。对于低频对象、一次性对象、生命周期复杂的对象、强身份对象、不可可靠重置的对象，直接创建和销毁可能更清晰。对象池封装的价值不是覆盖所有实例化，而是在明确适合池化的对象上提供统一、可靠、可观测的复用机制。工程质量来自边界清楚，而不是工具使用范围最大化。
 
 ### 总结
-基于 `UnityEngine.Pool` 封装的对象池管理工具，在官方 API 的安全检查基础上添加了预热、延迟回收和生命周期接口，大幅降低了手动管理对象池的复杂度和出错概率。对于频繁生成和销毁 GameObject 的场景，这是 Unity 项目中最推荐的对象池方案。
+
+基于 `UnityEngine.Pool` 封装对象池的正确方向，是把官方容器能力转化为项目级生命周期治理能力。`ObjectPool<T>` 负责创建、取出、归还、销毁和容量控制；项目封装负责预制体注册、实例归属、状态重置、延迟回收、场景清理、资源句柄、统计诊断和业务入口。两者结合，才能同时获得官方实现的可靠性和项目工程所需的可控性。
+
+一个合格的封装方案应当具备几项基础能力：统一注册和预热；通过实例映射确认归属；取出和回收时执行生命周期接口；使用版本令牌保护延迟回收；按作用域清理池；根据资源来源选择正确销毁方式；记录活跃数、空闲数、峰值和异常；让业务通过少量稳定入口使用对象池。缺少这些能力时，对象池会停留在“能复用对象”的层次，难以支撑复杂项目。
+
+对象池的本质不是节省几行 `Instantiate` 和 `Destroy`，而是把高频对象的生命周期从隐式状态变成显式协议。封装做得好，业务获得的是更稳定的帧时间、更少的 GC 压力、更清晰的资源归属和更可排查的问题现场；封装做得粗糙，复用会把状态污染、资源泄漏和偶发错误藏得更深。以 `UnityEngine.Pool` 为底座，保持清晰边界和充分观测，是在 Unity 项目中构建对象池系统的稳健路径。
 
 ## 元数据
-- **创建时间：** 2026-04-20 21:04
-- **最后更新：** 2026-04-24
-- **作者：** 吉良吉影
-- **分类：** 资源管理
-- **标签：** 对象池、ObjectPool、UnityEngine.Pool、GOAP、性能优化
-- **来源：** 已有文稿整理与深度重写
 
----
-*文档基于与吉良吉影的讨论，由小雅整理*
+- 创建时间：2026-04-20 21:04
+- 最后更新时间：2026-05-11
+- 版本：2.0
+- 分类：资源管理
+- 标签：UnityEngine.Pool、ObjectPool、对象池、生命周期管理、资源管理、性能优化
+- 来源简注：基于既有主题重写为正式技术文档
