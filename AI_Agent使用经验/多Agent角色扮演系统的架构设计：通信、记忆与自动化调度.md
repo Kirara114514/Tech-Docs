@@ -142,7 +142,7 @@ Agent 间通信使用 `chat_with_agent` 工具，每次调用指定固定的 `se
 family-{A的agent_id}-{B的agent_id}
 ```
 
-如美咲（s2AbMc）联系千鹤（QyRw3t）时使用 `family-s2AbMc-QyRw3t`。
+如 Agent A 联系 Agent B 时使用 `family-A_id-B_id`。
 
 固定 session_id 的好处：
 - 通信历史可追溯，同一个关系对的对话累积在同一文件中
@@ -153,8 +153,8 @@ family-{A的agent_id}-{B的agent_id}
 
 经过实验验证，`chat_with_agent` 的 session JSON 文件**只存在于被调用方（目标 Agent）的工作区**，调用方不保存。这意味着：
 
-- 美咲调 `chat_with_agent(to_agent="QyRw3t")` 后，session 文件写入 `QyRw3t/sessions/`，不在 `s2AbMc/sessions/`
-- 千鹤调 `chat_with_agent(to_agent="s2AbMc")` 后，session 文件写入 `s2AbMc/sessions/`
+- Agent A 调 `chat_with_agent(to_agent="B")` 后，session 文件写入 `B/sessions/`，不在 `A/sessions/`
+- Agent B 调 `chat_with_agent(to_agent="A")` 后，session 文件写入 `A/sessions/`
 
 这不是 bug——是平台的设计特性。要获取两个方向的完整对话，必须扫描**双方**工作区的 sessions 目录。心跳预处理器在设计时已考虑这种非对称性，采用双向覆盖策略。
 
