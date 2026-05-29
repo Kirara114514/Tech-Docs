@@ -1,231 +1,1155 @@
-# KiraFramework：架构讲解、工业化扩展与 Luban 配置管线迭代方案
+# KiraFramework：从 Unity 工具链原型到工业化配置管线的架构讲解与 Luban 迭代方案
 
 ## 摘要
 
-KiraFramework 的核心价值不在于它已经覆盖了多少 Unity 基础功能，而在于它验证了一条更重要的工程主线：用配置和元数据表达事实，用生成器产出可调用接口，用类型系统约束业务代码，把错误从运行时前移到编辑器、生成器和构建阶段。事件键、资源路径、UI 页面、View 脚本、ViewModel 元数据、Excel 配置、枚举定义和 JSON 导出看似分散，实则都属于同一类问题：如何把字符串约定、手工绑定、重复样板和人工同步，收束为配置驱动、生成驱动、编译期可校验的开发链路。
+KiraFramework 是一个基于 Unity 的工程化工具链原型。它当前不是一个单纯的运行时框架，也不是只负责 UI、事件或导表的单点工具，而是一条围绕游戏工程元数据展开的生成管线：开发者先用 `ScriptableObject`、Prefab、Excel 和 C# Attribute 描述事件、资源路径、UI 结构、ViewModel 字段、枚举和配置表；Unity Editor 工具再扫描、解析、生成 C# 代码或 JSON 数据；最后运行时代码只消费已经生成好的类型、常量、组件引用和配置数据。换句话说，这个项目做的事情是把“字符串约定、手工拖拽、重复样板代码、人工同步配置”尽可能前移到编辑器、生成器和编译阶段处理。
 
-本文围绕 KiraFramework 的架构讲解、工业化扩展与 Luban 配置管线迭代方案展开，核心论点是：KiraFramework 应从 Unity 编辑器内的多工具集合，演进为一条由 Schema 驱动、由中间表示组织、由生成器编译、由校验报告托底、由引擎适配层落地的工程化配置平台。文章先分析当前框架为什么已经具备“领域编译器”的雏形；再解释静态调用链、类型安全事件、UI 自动生成、MVVM 元数据、Excel 导表和枚举生成的共同原理；随后提出值类型系统、增量 API 生成、全量权威导出、ViewModel 缓存化、Luban + Xlsx 迁移和跨引擎解耦的设计方案；最后讨论落地顺序、风险控制和验证标准。目标是把零散工具升级为可持续演进的工业化管线。
+这篇文章会先把项目本身讲清楚：它解决什么问题、现在有哪些输入和输出、源码里已经跑通了哪些链路，以及它为什么更像一个“游戏元数据领域编译器”，而不是传统意义上只在运行时发挥作用的框架。然后再讨论迭代思路：为什么需要统一中间表示 `KiraManifest`，为什么静态调用链要从字符串包装升级为领域值类型系统，为什么导表要拆成“开发态增量 API 生成”和“构建态全量权威导出”，为什么 `Luban + Xlsx` 应被定位为配置编译底座而不是替代全部 Kira 生成器，以及为什么要把 Unity 相关能力下沉到 Adapter 层，为后续跨引擎迁移留下结构空间。
+
+KiraFramework 的架构叙事应建立在源码已经验证过的生成链路之上：以配置和元数据表达事实，以生成器产出可调用接口，以类型系统约束业务代码，以校验和报告降低运行时不确定性。事件键、资源路径、UI View 脚本、ViewModel、Excel 配置模型、JSON、枚举文件这些看似分散的产物，本质上都属于同一条链路上的不同投影。
 
 ## 正文
 
 ### 背景
 
-#### 一、KiraFramework 的统一主题是“前移约束”
+#### 一、先把项目说清楚：KiraFramework 到底做了什么
 
-KiraFramework 当前包含静态映射生成、事件系统、UI 运行时、Prefab 脚本生成、MVVM 元数据扫描、ViewModel 生成、Excel 配置导出和枚举生成等模块。若只从功能看，它像是一组 Unity 编辑器工具；若从工程结构看，它们都在解决同一个问题：把开发中容易依赖人工记忆和字符串约定的内容，变成可生成、可校验、可编译的接口和数据。
+如果读者第一次看到 KiraFramework，不应先看到 Manifest、Luban、跨引擎、工业化这些词。应该先知道一件朴素的事：这是一个 Unity 项目里的开发工具链实验，它试图把游戏开发中大量“靠人记、靠字符串、靠手拖、靠同步”的东西，变成工具自动生成、编译器能检查、运行时能直接消费的工程产物。
 
-事件名不再手写字符串，而是生成强类型事件键。资源路径不再散落在业务脚本，而是进入静态调用链。Prefab 字段不再靠人工声明和拖拽，而是通过扫描生成 View 脚本并回填引用。Model 字段不再靠手写 ViewModel 包装，而是由元数据驱动生成。Excel 表头不只是给策划看的字段说明，而是可以生成模型类和运行时 JSON。枚举定义不再只存在于代码或文档，而是由资产或配置统一生成。
+在普通 Unity 项目里，下面这些问题很常见。
 
-这些能力共同体现了一个原则：能在作者态、编辑器态、生成态解决的问题，不应留到运行时才暴露。KiraFramework 真正的架构资产不是某个单独工具，而是这条“作者态输入 -> 结构化语义 -> 生成产物 -> 运行时消费”的闭环。
+事件系统里经常会出现手写字符串，例如 `"GameStart"`、`"OnHpChanged"`。字符串写错时，编译器不会提醒，运行到某个业务流程才发现监听不到事件。
 
-#### 二、当前框架更接近领域编译器，而不是普通运行时框架
+资源加载经常会直接写路径，例如 `Resources.Load("UI/TestPanel")`。路径移动、重命名或大小写变化后，问题也往往推迟到运行时才暴露。
 
-传统运行时框架强调运行期间如何分发事件、加载资源、管理 UI、读取配置。KiraFramework 当前更值得关注的部分，恰恰是运行前发生的事情：扫描、校验、生成、刷新、编译、导出。它把事件定义、资源定位、UI 结构、ViewModel 暴露字段、配置表结构和枚举定义都当作“源语言”，再编译成 C# 接口、描述符、模型类和运行时数据。
+UI Prefab 里的按钮、图片、文本组件需要在脚本里声明 `[SerializeField]` 字段，再从 Inspector 手工拖拽。节点一多，漏拖、错拖、重命名后字段没同步都会出现。
 
-从这个角度看，KiraFramework 可以被理解为一台面向游戏工程元数据的领域编译器。它编译的不是通用程序，而是游戏开发中的工程事实：事件路径、资源键、页面描述、配置 Schema、字段暴露关系、枚举成员和运行时数据。只要这个定位成立，后续演进重点就不应是继续堆叠更多小工具，而应是统一输入语义、统一中间表示、统一生成流程、统一校验报告和统一运行时抽象。
+ViewModel 里经常要围绕 Model 字段写一堆重复属性包装，例如 backing field、getter、setter、`PropertyChanged` 通知。字段多时，这部分样板代码既烦，又容易不同步。
 
-#### 三、ScriptableObject 和 Excel 只是输入载体，不应成为架构中心
+Excel 配置表在策划和程序之间传递时，表头、字段类型、模型类、JSON 数据之间需要保持一致。一旦表结构变了而代码没变，或者代码变了而 JSON 没同步，问题也会积累到运行时。
 
-当前项目中，部分作者态输入来自 ScriptableObject，部分来自 Prefab，部分来自 Excel。它们在原型阶段很自然，因为 Unity 编辑器提供了便利的资产系统和 Inspector。但如果框架目标是工业化和跨引擎，输入载体就不能成为架构中心。真正稳定的应该是 Schema、Manifest、中间表示和生成策略。
+枚举定义也类似。层级、状态、类型等枚举如果一部分写在代码里，一部分写在文档里，一部分写在资产里，长期维护就会出现事实源不统一的问题。
 
-例如，事件定义可以来自 ScriptableObject，也可以来自 Xlsx 或 YAML；资源路径可以来自 Unity 资产扫描，也可以来自 Addressables/YooAsset 构建表；UI 页面可以来自 Prefab，也可以来自 UI 描述表；ViewModel 元数据可以来自 Attribute，也可以来自配置表。输入来源可以变化，但生成器消费的语义结构应稳定。只有这样，未来从 ScriptableObject 迁移到 Luban + Xlsx 时，才不是重写所有生成器，而是替换输入适配器。
+KiraFramework 当前做的事，就是把这些问题收束到一条工具链里。它让开发者用若干作者态输入描述事实，再由 Editor 工具生成运行时需要的代码和数据。当前源码里已经能看到以下几类输入与产物。
 
-#### 四、跨引擎目标要求尽早拆分 Core、Toolchain 和 Adapter
+| 作者态输入 | 当前载体 | 生成或消费产物 | 解决的问题 |
+| --- | --- | --- | --- |
+| 事件键定义 | `Assets/Configs/KiraStatics/EventKey.asset` | `KiraEventKey.cs` 中的嵌套事件类型 | 避免手写事件字符串 |
+| 资源路径定义 | `Assets/Configs/KiraStatics/AssetsPath.asset` | `KiraAssetsPath.cs` 中的嵌套常量 | 避免资源路径散落 |
+| UI Prefab 结构 | `Assets/Prefabs/UI/*.prefab` | `GeneratedUI/*.cs` 和 Prefab 字段回填 | 减少手写字段和拖拽绑定 |
+| MVVM Model 字段 | `[MVVMModel]`、`[MVVMField]` | `ViewModel` 属性包装 | 减少重复 ViewModel 代码 |
+| ViewModel 绑定配置 | `ViewModelConfigSO` | 继承 `ViewModelBase` 的 VM 脚本 | 把绑定选择显式化 |
+| Excel 配置表 | 项目根目录 `Excels/*.xlsx` | `GeneratedJsonScripts/*.cs`、`Resources/ConfigJson/*.json` | 同步表结构、模型和运行时数据 |
+| 枚举定义 | `EnumDefinitionAsset` | `GeneratedEnums/*.cs` | 统一枚举事实源 |
 
-如果 KiraFramework 希望未来迁移到 UE 或其他引擎，必须承认一点：Unity 的 Prefab、MonoBehaviour、ScriptableObject、AssetDatabase、Canvas 和 EditorWindow 不可能原封不动迁移。可迁移的是配置结构、静态命名体系、中间表示、生成策略、校验规则和运行时抽象接口；必须重写的是引擎对象生命周期、UI 宿主、资源系统、编辑器入口和资产回填。
+这就是本文开头必须先说清楚的东西：KiraFramework 并不是“做了一个 EventManager”或“做了一个 UIManager”那么简单。那些运行时类只是消费入口。项目真正有价值的部分，是它已经把多个 Unity 开发痛点都拉回到一个统一问题上：如何让工程事实先被结构化描述，再被生成器编译成强约束产物。
 
-因此，合理目标不是“完全零改动跨引擎”，而是“核心语义和生成管线零改动或少改动，具体引擎适配层按平台重写”。这个目标要求框架尽早拆分为 Core、Toolchain、UnityAdapter 和未来的 UnrealAdapter。Unity 应成为 KiraFramework 的一个落地适配，而不是框架本体。
+#### 二、这个项目的核心思路是“把约束前移”
 
-### 核心原理
+KiraFramework 的主线可以用一条很短的流程概括：
 
-#### 一、配置是事实源，代码是投影层
-
-KiraFramework 最应固化的原则是：配置和元数据表达事实，生成代码只是投影。事件结构、资源定位、UI 页面定义、ViewModel 暴露字段、配置表 Schema 和枚举成员，都不应由业务代码手工散落定义。业务代码应消费生成后的强类型接口。
-
-这个原则带来三个收益。第一，合法调用空间被收束，业务层只能使用生成器允许的键和描述符。第二，错误前移，路径拼错、事件缺失、字段不存在、枚举重复等问题可以在生成或编译阶段暴露。第三，重构更可控，配置变化会重新生成接口，编译器能帮助发现受影响代码。
-
-因此，KiraFramework 的静态 API 不只是开发体验优化。自动补全背后的真正价值，是强约束 API。
-
-#### 二、静态调用链本质是把路径树编译成类型树
-
-当前静态映射生成通过配置路径生成 `KiraEventKey`、`KiraAssetsPath` 等链式接口。其本质不是字符串拼接，而是把层级路径编译成类型树。路径层级表达命名空间，叶子节点表达事件键、资源路径或其他逻辑值。业务层通过类型和常量访问这些结构，避免手写字符串。
-
-当前叶子语义若只有“空值生成事件类型”和“非空值生成字符串常量”，原型阶段足够，但工业化阶段会不足。真实项目中，叶子节点可能是 EventKey、ResPath、AddressKey、UIPageKey、SceneKey、ConfigTableKey、LocalizationKey、AudioCueKey 或 ShaderParamKey。它们虽然都能被字符串表示，但校验规则和运行时描述不同。
-
-因此，静态调用链应演进为配置驱动的值类型系统。配置不只声明路径，还声明 Domain、LeafType、ValueType、GeneratorStrategy 和校验规则。生成器根据策略输出类型、常量、结构化描述符或运行时 Descriptor。
-
-#### 三、事件系统验证的是类型化标识的可行性
-
-事件系统使用 `IKiraEventKey` 与泛型约束，以 `Type` 作为事件键，替代字符串事件名。它的价值不只是事件系统更安全，而是证明“逻辑标识可以类型化”。一旦事件键可以类型化，资源键、页面键、配置表键、音频键和本地化键也可以沿同一思路类型化。
-
-这说明事件系统不应被孤立看待。它是 KiraFramework 类型化标识体系的一个样例。未来更好的方向是让事件定义进入统一 StaticDefs 或 EventDefs，由同一中间表示和生成管线管理。
-
-#### 四、UI 自动生成解决的是结构一致性
-
-Prefab 扫描生成 View 脚本和字段回填，表面上减少了 `[SerializeField]` 和拖拽工作，深层价值是让 UI 结构变化自动反映到代码接口。大型 UI 页面中，节点重命名、组件替换、字段漏拖和错绑都很常见。生成器可以把这些问题转成可重复扫描、可校验、可回填的流程。
-
-但 UI 生成也最依赖 Unity。Prefab 扫描、组件类型、序列化字段、AssetDatabase 和 Canvas 层级都是 Unity 特定能力。未来应把“UI 页面描述符”和“Unity Prefab 适配”分开。页面逻辑名、层级、打开策略、是否缓存、资源定位等可以进入引擎无关描述符；Prefab 扫描和回填留在 UnityAdapter。
-
-#### 五、MVVM 元数据应从实时反射走向生成缓存
-
-当前 MVVM 通过 Attribute 标记 Model 和字段，再由编辑器反射扫描，供 Inspector 和 ViewModel 生成器使用。这个方案适合原型，但规模扩大后会遇到域重载扫描、Inspector 实时依赖反射、缓存过期和跨引擎迁移困难等问题。
-
-更稳妥的做法是把 Attribute 当作作者态声明，在生成阶段扫描一次，输出显式 MVVM 注册表。Inspector 和 ViewModel 生成器读取注册表，而不是反复实时反射。这样元数据从“编辑器即时发现”升级为“生成产物”，错误也能前移到生成阶段。
-
-注册表不应只缓存字段列表，还可逐步扩展字段别名、只读性、默认值、校验规则、命令定义和绑定策略。这样 MVVM 元数据会正式纳入框架编译管线。
-
-#### 六、导表应区分开发即时性和构建权威性
-
-配置表工作流有两个不同目标。开发时希望新增事件、资源、枚举或 UI 页面后尽快生成 API，获得 IDE 补全和编译反馈；构建时则要求所有表、引用、数据和导出结果经过全量校验，确保权威一致。把这两类目标混成一个“导表按钮”，会导致流程既不够快，也不够安全。
-
-因此，导表应拆成两条链路：增量 API 生成和全量配置导出。增量链路服务开发态即时反馈，只处理受影响的结构型产物；全量链路服务提交、CI 和正式构建，执行完整 Schema 校验、跨表引用校验、运行时数据导出、版本 Manifest 和报告生成。当两者冲突时，以全量结果为准。
-
-### 设计思路
-
-#### 一、建立 KiraManifest 作为统一中间表示
-
-所有输入源都应先转换为统一 Manifest，再由生成器消费。Manifest 可以包含 StaticDefs、EventDefs、AssetDefs、UiPageDefs、ViewModelDefs、EnumDefs、ConfigTableDefs 和 ValidationReports。这样生成器不直接依赖 ScriptableObject、Excel、Prefab 或 Attribute，而是依赖稳定语义。
-
-构建流程可以概括为：读取作者态输入，构建 Manifest，执行校验，按领域生成静态 API、UI 描述符、MVVM 注册表、枚举、配置模型和运行时数据，最后输出报告。这个设计能容纳当前工具，也能支持未来 Luban + Xlsx。
-
-#### 二、把 Luban 定位为配置编译层，而不是替代所有生成器
-
-迁移到 Luban + Xlsx 的目标不是把 Kira 的生成器全部丢掉。更合理的分工是：Luban 负责配置结构、数据导出、多语言模型和基础 Schema；Kira 负责框架特有的静态接口、UI 描述符、MVVM 注册表、领域 Descriptor 和引擎适配产物。
-
-也就是说，Luban 是配置编译底座，Kira 是工程接口编译层。两者是上下游关系。若让 Luban 直接承担所有框架语义，Kira 的领域约束会变得分散；若完全不用 Luban，配置体系又会缺少成熟的 Schema 和导出能力。
-
-#### 三、静态调用链使用 Domain + GeneratorStrategy
-
-未来静态定义不应只包含路径和值，还应包含领域和生成策略。EventKey 可生成类型标识，ResPath 可生成字符串或资源描述符，UIPageKey 可生成包含层级、Prefab 路径、缓存策略的页面 Descriptor，LocalizationKey 可生成文本键，ConfigTableKey 可生成表访问入口。
-
-这种设计能让同一条路径树支持不同领域，也能让校验更准确。例如资源路径需要校验资源存在，事件 Payload 需要校验类型存在，UI 页面需要校验层级和 Prefab，配置表键需要校验表定义。
-
-#### 四、引擎依赖下沉到 Adapter
-
-Core 层只包含元数据模型、生成中间表示和运行时抽象接口。Toolchain 层负责读取输入、校验、生成和报告。UnityAdapter 负责 Unity 资源系统、UI 运行时、Prefab 扫描、AssetDatabase 接入和编辑器菜单。未来 UnrealAdapter 负责 UE 资产系统、UMG 页面、工具入口和运行时适配。
-
-运行时接口可包括 IAssetProvider、IConfigProvider、IUIRuntime、IEventRuntime。业务层消费生成的 Descriptor 和这些接口，而不是直接依赖 `Resources.Load`、`UIManager.Show` 或 Unity 页面类型。
-
-#### 五、生成报告成为一等产物
-
-工业化工具链必须可观测。每次生成都应输出 GenerationReport、ValidationReport、VersionManifest 和 ArtifactIndex。报告记录输入签名、生成文件、增量或全量模式、警告、错误、耗时和产物映射。没有报告，生成器越多，团队越难判断本次变更是否可信。
-
-报告还可以解决增量链路的权威性问题。开发者能清楚看到当前结果是增量反馈还是全量构建产物，CI 也能强制只接受全量报告。
-
-#### 六、按阶段迁移，而不是一次性推倒重来
-
-合理顺序是：先抽离 Manifest，不急着换输入源；再落地静态调用链值类型系统；然后引入增量 API 生成；再做 ViewModel 注册表缓存；随后逐步把事件、资源、枚举、普通配置、UI 页面和 ViewModel 描述迁移到 Luban + Xlsx；最后拆分 Core 与 Adapter。
-
-这个顺序的好处是每一步都有收益，也能回退。若先强行迁移输入源，而中间表示仍然分散，风险会很高。
-
-### 进阶讨论
-
-#### 一、为什么不能只做更多编辑器按钮
-
-继续增加编辑器按钮能短期提升效率，但会让工具链越来越碎。每个按钮有自己的输入、校验、生成和输出，最终团队很难知道哪个产物是权威的，哪些文件需要提交，哪些错误应阻断构建。KiraFramework 若要工业化，必须从“按钮集合”变成“流水线”。
-
-流水线的关键是统一调度、统一 Manifest、统一校验和统一报告。按钮可以作为入口，但不应成为架构边界。
-
-#### 二、增量生成不是权威构建
-
-增量生成的价值是快，代价是覆盖范围有限。它适合事件键、枚举、资源路径、UI 页面描述等结构型接口的即时反馈，不适合替代全量配置导出和跨表一致性校验。正式规则应写清：本地增量结果只服务开发体验，提交和构建必须通过全量链路。
-
-这能避免“本地能补全，但构建失败”的责任混乱。
-
-#### 三、跨引擎迁移的现实边界
-
-配置 Schema、Manifest、静态接口命名、生成策略和运行时抽象可以追求跨引擎复用。Prefab 扫描、Unity 序列化、Canvas 层级、AssetDatabase、EditorWindow 和 MonoBehaviour 生命周期必须由 UnityAdapter 承担。UE 侧需要重新实现 UMG 适配、资产加载和工具入口。
-
-明确边界比喊“零改动迁移”更专业。只有把可迁移和不可迁移的部分拆开，迁移才可规划。
-
-#### 四、值类型系统应避免过度泛化
-
-静态调用链值类型系统很有价值，但一开始不应支持过多领域。建议先落地 EventKey、ResPath、UIPageKey、EnumKey 和 ConfigTableKey 五类，验证生成策略、校验和运行时消费。等 Manifest 和报告稳定后，再扩展 LocalizationKey、AudioCueKey、SceneKey 等领域。
-
-过早泛化会让生成器复杂度上升，反而拖慢核心能力落地。
-
-#### 五、ViewModel 缓存需要处理过期问题
-
-注册表缓存化会带来新问题：源码变了但注册表未更新，Inspector 看到旧数据。解决方式是把注册表生成纳入统一流水线，记录输入签名，发现过期时给出明确提示。不要静默使用旧缓存，也不要在 Inspector 中悄悄重新反射生成，这会破坏可预测性。
-
-缓存化的目标是让元数据成为显式产物，而不是把隐式行为换个地方藏起来。
-
-#### 六、实现方案：Manifest 构建伪代码
-
-```pseudo
-function BuildKiraArtifacts(mode):
-    sources = LoadAuthoringSources()
-    manifest = BuildKiraManifest(sources)
-    report = ValidateManifest(manifest, mode)
-    if report.HasError:
-        FailBuild(report)
-    GenerateArtifacts(manifest, mode)
-    WriteReports(manifest, report, mode)
+```text
+作者态输入 -> Editor 扫描/解析 -> 代码与数据生成 -> Unity 编译 -> Runtime 消费
 ```
 
-这段流程的重点是所有生成器共享 Manifest 和报告，而不是各自读取原始输入。
+这里的关键词是“前移”。能在作者态确定的事情，不应该靠运行时碰运气；能在生成阶段校验的事情，不应该靠业务代码手写；能交给类型系统约束的事情，不应该继续用裸字符串传来传去。
 
-#### 七、实现方案：双轨导表规则
+事件键就是最直接的例子。当前项目通过 `MappingConfigSO` 描述事件路径。如果某条路径没有 `FinalValue`，`StaticCodeGenerator` 会把它生成成实现 `IKiraEventKey` 的类型。业务代码注册事件时写的是：
+
+```csharp
+RegisterEvent<KiraEventKey.GamePlay.GameStart>(OnGameStart);
+```
+
+这与手写 `"GamePlay.GameStart"` 的差别很大。前者是 C# 类型，写错类名会直接编译失败，IDE 也能补全；后者只是字符串，拼错以后只能在运行时排查。
+
+资源路径也是同一思路。如果某条路径有 `FinalValue`，生成器会把它变成 `const string`。业务代码不必到处复制路径，而是从 `KiraAssetsPath.UI.Panel.TestPanel` 这样的生成接口取值。虽然当前生成物仍然是字符串常量，但事实源已经从业务代码里抽离出来。
+
+Prefab View 生成也体现了前移。传统做法是程序员看着 Prefab 节点结构，手写字段，再到 Inspector 里拖拽组件。KiraFramework 的 `PrefabScriptGenerator` 会扫描 Prefab，收集非 `Transform` 组件，生成 `partial class` 的 `AutoGenerated` 区域，再通过 `DeferredBinder` 在脚本重编译后回填序列化字段。UI 结构变化时，重新扫描即可把变化投影到代码字段里。
+
+Excel 导表同样是前移。表头里写的 `ModelName`、英文列名、字段类型，不再只是给人看的约定，而会生成 C# 模型类；数据区不再靠业务代码逐格解析，而会导出 JSON。当前工具虽然还比较原型，但已经表达了一个重要方向：配置表结构应该能驱动模型和运行时数据，而不是让程序员在多个地方重复维护。
+
+所以，KiraFramework 的思路不是“给 Unity 加几个菜单按钮”。按钮只是入口。真正的思路是把事件、资源、UI、MVVM、配置和枚举都看成“可被编译的工程元数据”。
+
+#### 三、当前工程可以按三层理解
+
+为了让读者从一开始就不迷路，可以把当前项目拆成三层。
+
+第一层是 Editor Layer。它读取 `ScriptableObject`、Prefab、Excel 和程序集元数据，负责扫描、解析、生成代码、刷新 `AssetDatabase`、等待 Unity 编译、在编译后继续导出 JSON 或回填 Prefab 字段。源码主要集中在 `Assets/Editor/Scripts/Tools`。
+
+第二层是 Generated Layer。它是各种生成器的输出，包括 `KiraEventKey`、`KiraAssetsPath`、`UILayer`、`GeneratedUI`、`ViewModel`、配置模型和 JSON。它不是手写业务逻辑，而是作者态输入经过生成后的投影。
+
+第三层是 Runtime Layer。它提供运行时消费入口，例如 `EventManager`、`KiraObject`、`UIManager`、`UIBase`、`ViewModelBase`。这部分让业务脚本能使用生成的事件类型、资源路径、UI 页面和 ViewModel 属性。
+
+用结构图表示就是：
+
+```text
+Editor Layer
+    MappingConfigSO / EnumDefinitionAsset / ViewModelConfigSO / Prefab / Excel / Attribute
+    StaticCodeGenerator / PrefabScriptGenerator / ViewModelGenerator / ExcelConfigTool / EnumDefinitionAssetEditor
+
+Generated Layer
+    KiraEventKey.cs / KiraAssetsPath.cs / UILayer.cs / GeneratedUI/*.cs
+    GeneratedJsonScripts/*.cs / Resources/ConfigJson/*.json / ViewModel*.cs
+
+Runtime Layer
+    EventManager / KiraObject / UIManager / UIBase / ViewModelBase
+```
+
+这三层也解释了为什么文章后面会不断提到“领域编译器”。KiraFramework 的价值并不只发生在 Runtime Layer；恰恰相反，它最有价值的工作发生在运行前。
+
+#### 四、本文的阅读路径：先看项目现场，再看演进路线
+
+理解 KiraFramework 时，最自然的顺序不是先记住 Manifest、Luban、Adapter 这些架构名词，而是先看它已经在 Unity 工程里跑通了哪些具体链路。事件键如何从 `ScriptableObject` 生成 C# 类型，资源路径如何进入静态调用链，Prefab 如何生成 View 字段，Attribute 如何进入 ViewModel 生成，Excel 表头如何变成模型类和 JSON，这些才是项目的地基。
+
+当这些链路看清楚以后，再讨论抽象层会更顺。Manifest 解决的是“多种输入如何统一表达”的问题；Luban 解决的是“配置 Schema 和运行时数据如何工业化导出”的问题；Adapter 解决的是“哪些能力属于 Unity，哪些能力可以沉淀为引擎无关核心”的问题。也就是说，后文的演进方案不是凭空设计，而是从当前源码已经验证过的生成链路中自然长出来的。
+
+因此，本文采用的叙事顺序是：
+
+```text
+项目做了什么
+-> 为什么这样做
+-> 源码里有哪些链路
+-> 当前边界在哪里
+-> 后续如何迭代
+-> Luban 应该怎样接入
+-> 工业化验证标准是什么
+```
+
+### 核心内容
+
+#### 一、目录结构说明：先知道每块代码在哪里
+
+当前 KiraFramework 项目是一个 Unity 工程，核心目录可以这样理解：
+
+```text
+Assets/
+├── Configs/
+│   ├── Enum/
+│   │   └── UILayer.asset
+│   └── KiraStatics/
+│       ├── EventKey.asset
+│       └── AssetsPath.asset
+├── Editor/Scripts/Tools/
+│   ├── StaticCodeGenerator.cs
+│   ├── PrefabContextMenu.cs
+│   ├── PrefabCreationWatcher.cs
+│   ├── MVVMDataCache.cs
+│   ├── ModelFieldBindingDrawer.cs
+│   ├── ViewModelGenerator.cs
+│   ├── ExcelConfigTool.cs
+│   └── EnumDefinitionAssetEditor.cs
+├── Prefabs/UI/
+│   ├── TestPanel.prefab
+│   └── MainGamePanel.prefab
+├── Resources/ConfigJson/
+│   └── 配置 JSON 输出
+└── Scripts/
+    ├── Core/
+    │   ├── Base/
+    │   │   ├── IKiraEventKey.cs
+    │   │   ├── KiraObject.cs
+    │   │   ├── UIBase.cs
+    │   │   ├── MVVMAttributes.cs
+    │   │   └── MappingEntry.cs
+    │   ├── Manager/
+    │   │   ├── EventManager.cs
+    │   │   ├── UIManager.cs
+    │   │   └── InitManager.cs
+    │   └── SO_Script/
+    │       ├── MappingConfigSO.cs
+    │       ├── EnumDefinitionAsset.cs
+    │       └── ViewModelConfigSO.cs
+    ├── Generated/
+    │   ├── KiraStatics/
+    │   ├── GeneratedUI/
+    │   ├── GeneratedEnums/
+    │   └── GeneratedJsonScripts/
+    └── MVVM/
+        ├── Model/
+        ├── VM/base/
+        └── VMSO/
+```
+
+项目使用 Unity 2022.3.62f2c1，`Packages/manifest.json` 中包含 UGUI、TextMeshPro、URP、Unity Test Framework 等常规依赖。Excel 管线使用了 NPOI 处理 `.xlsx`，使用 Newtonsoft.Json 导出 JSON。这些依赖说明当前实现明确扎根 Unity Editor 工作流，而不是一个纯 .NET 命令行工具。
+
+#### 二、静态调用链：把路径配置编译成 C# 类型树
+
+静态调用链是项目里最能体现整体思路的模块。它的输入是 `MappingConfigSO`：
+
+```csharp
+[CreateAssetMenu(fileName = "MappingConfig", menuName = "KiraStatics/Static Mapping Configuration")]
+public class MappingConfigSO : ScriptableObject
+{
+    public string RootClassName = "MyStatics";
+    public List<MappingEntry> Entries = new List<MappingEntry>();
+}
+```
+
+每个 `MappingEntry` 包含两部分。
+
+```csharp
+public class MappingEntry
+{
+    public List<string> PathKeys = new List<string>();
+    public string FinalValue = "";
+}
+```
+
+`PathKeys` 表示嵌套路径，例如 `UI -> Panel -> TestPanel`。`FinalValue` 表示最终值。如果 `FinalValue` 为空，当前规则认为它是事件键，生成实现 `IKiraEventKey` 的类；如果 `FinalValue` 不为空，就生成字符串常量。
+
+以 `EventKey.asset` 为例，它声明了：
+
+```text
+RootClassName: KiraEventKey
+Entries:
+  - GamePlay / GameStart
+  - Test / GamePlay / GameStart
+```
+
+对应生成结果是：
+
+```csharp
+namespace Game.Statics
+{
+    public static class KiraEventKey
+    {
+        public class GamePlay
+        {
+            public class GameStart : IKiraEventKey { }
+        }
+
+        public class Test
+        {
+            public class GamePlay
+            {
+                public class GameStart : IKiraEventKey { }
+            }
+        }
+    }
+}
+```
+
+以 `AssetsPath.asset` 为例，它声明了：
+
+```text
+RootClassName: KiraAssetsPath
+Entries:
+  - UI / Panel / TestPanel -> Assets/Prefabs/UI/TestPanel
+  - UI / HUD / HP -> Assets/Prefabs/UI/HP
+```
+
+对应生成结果是：
+
+```csharp
+namespace Game.Statics
+{
+    public static class KiraAssetsPath
+    {
+        public class UI
+        {
+            public class Panel
+            {
+                public const string TestPanel = "Assets/Prefabs/UI/TestPanel";
+            }
+
+            public class HUD
+            {
+                public const string HP = "Assets/Prefabs/UI/HP";
+            }
+        }
+    }
+}
+```
+
+`StaticCodeGenerator` 的核心逻辑是递归分组 `PathKeys`，每一层生成一个嵌套类，叶子节点根据 `FinalValue` 决定生成事件类型还是常量。它还会清洗标识符，避免生成非法 C# 名称，并在写文件前检查内容是否变化，减少不必要的 IO 和 Unity 编译。
+
+这个模块的意义并不只是“用静态类包一下字符串”。它证明了一件更重要的事：路径型配置可以被编译成类型树。未来资源、事件、页面、配置表、本地化、音频等领域，都可以沿着这个思路生成不同语义的访问接口。
+
+#### 三、类型安全事件：用 Type 替代字符串事件名
+
+事件系统由 `IKiraEventKey`、`EventManager` 和 `KiraObject` 组成。
+
+`IKiraEventKey` 是一个空接口：
+
+```csharp
+namespace Game.Statics
+{
+    public interface IKiraEventKey { }
+}
+```
+
+它的作用不是提供行为，而是作为类型约束。由静态调用链生成的事件类会实现这个接口，业务代码注册或触发事件时必须传入符合约束的类型。
+
+`EventManager` 内部使用两个字典：
+
+```text
+Dictionary<Type, Action>
+Dictionary<Type, Delegate>
+```
+
+第一个字典保存无参事件，第二个字典保存带单参数事件。注册事件时，泛型参数 `T` 必须满足 `where T : IKiraEventKey`。这意味着普通类或字符串不能误入事件系统。
+
+无参事件的典型调用是：
+
+```csharp
+RegisterEvent<KiraEventKey.GamePlay.GameStart>(OnGameStart);
+FireEvent<KiraEventKey.GamePlay.GameStart>();
+```
+
+带参事件的典型调用是：
+
+```csharp
+RegisterEvent<KiraEventKey.Player.OnHpChanged, float>(OnHpChanged);
+FireEvent<KiraEventKey.Player.OnHpChanged, float>(80.5f);
+```
+
+当前实现会在带参事件注册时检查参数类型冲突。如果某个事件键已经注册过 `Action<float>`，之后又用同一个事件键注册 `Action<int>`，工具会输出错误日志。这不是完整的事件 Payload 类型系统，但已经迈出了关键一步：事件标识由字符串变成类型，事件分发由字符串查找变成 `Type` 查找。
+
+`KiraObject` 则是业务基类。它继承 `MonoBehaviour`，封装了 `RegisterEvent`、`UnregisterEvent` 和 `FireEvent`，让 UI 或其他业务对象可以直接使用生成的事件类型。例如生成的 `TestPanel` 中已经出现：
+
+```csharp
+void Start()
+{
+    RegisterEvent<KiraEventKey.GamePlay.GameStart>(OnTestEvent);
+}
+```
+
+这说明类型安全事件不是孤立模块，而是和 UI 生成产物、业务基类发生了连接。
+
+当前事件系统的边界也很清楚。它支持无参和单参数事件；事件 Payload 类型还没有进入配置；事件生命周期也没有自动跟随 `MonoBehaviour` 销毁做统一清理；跨程序集、跨域或热更新场景也没有深入处理。但它已经验证了 KiraFramework 最核心的工程假设：逻辑标识可以类型化，业务代码可以被类型系统约束。
+
+#### 四、UI 运行时：先有一个 Unity 侧消费入口
+
+`UIManager` 是当前 UI 运行时入口。它维护两个核心字典。
+
+```text
+Dictionary<UILayer, Transform> _layerRoots
+Dictionary<Type, UIBase> _openedPages
+```
+
+初始化时，`UIManager.Initialize(Transform uiRoot)` 会遍历 `UILayer` 枚举，为每个层级创建一个 `Canvas`，并通过枚举值设置 `sortingOrder`。当前 `UILayer` 由 `UILayer.asset` 生成：
+
+```csharp
+public enum UILayer
+{
+    FullScreen,
+    PopWindow,
+    TopTip
+}
+```
+
+页面显示流程可以概括为：
+
+```text
+Show<T>(prefabPath, data)
+-> 检查该页面类型是否已打开
+-> Resources.Load<GameObject>(prefabPath)
+-> Instantiate(prefab)
+-> 获取 T 组件
+-> 根据 page.Layer 挂到对应 Canvas
+-> 记录到 _openedPages
+-> 调用 OnShow(data)
+```
+
+`UIBase` 继承 `KiraObject`，提供三个生命周期入口：
+
+```csharp
+public virtual void OnShow(object data = null)
+public virtual void OnHide()
+public virtual void OnClose()
+```
+
+这套 UI 运行时很朴素，但它在项目里有两个作用。第一，它证明生成出来的 UI 脚本和资源路径最终有运行时消费位置。第二，它暴露了后续需要抽象的 Unity 依赖：当前 `UIManager` 直接使用 `Resources.Load`、`GameObject.Instantiate`、`Canvas`、`GraphicRaycaster` 和 `Transform`。如果未来要跨引擎，或者要从 `Resources` 迁移到 Addressables/YooAsset，这部分就应该下沉到 Unity Adapter。
+
+换句话说，`UIManager` 现在更像早期 Unity 落地实现，而不是框架的最终核心抽象。
+
+#### 五、UI View 生成：让 Prefab 结构投影到代码字段
+
+UI View 生成是当前项目里最能体现 Unity Editor 自动化价值的部分。入口在 `PrefabContextMenu`：
+
+```text
+Assets/Kira工具/MVVM/为UI预制体生成View脚本
+```
+
+当用户在 Project 视图里选择 Prefab 后，工具会判断默认脚本路径：
+
+```text
+Assets/Scripts/Generated/GeneratedUI/{PrefabName}.cs
+```
+
+如果脚本不存在，就打开窗口让用户确认路径和作者；如果脚本已经存在，就直接更新已有脚本的 `AutoGenerated` 区域。
+
+`PrefabScriptGenerator` 做了几件事。
+
+第一，递归扫描 Prefab 节点，收集当前节点上的所有非 `Transform` 组件。
+
+第二，根据节点名和组件类型生成字段名。例如 `CustomTMP` 节点上的 `TextMeshProUGUI` 组件会生成类似 `customTMP_textMeshProUGUI` 的字段。
+
+第三，使用 `HashSet` 维护字段名唯一性，遇到重名时自动追加序号。
+
+第四，收集组件命名空间，自动补齐 `using`。
+
+第五，遇到子节点上已经有 `KiraObject` 组件时，把它视为嵌套 View 边界，只引用该组件，不继续向下递归。这样父 View 不会无限展开子 View 的内部结构。
+
+第六，如果是新脚本，就生成完整 `partial class`；如果是旧脚本，就只替换 `#region AutoGenerated` 到 `#endregion` 之间的内容，并保留区域外的手写逻辑。
+
+生成后的 `TestPanel.cs` 大致是：
+
+```csharp
+public partial class TestPanel : KiraObject
+{
+#region AutoGenerated
+    [SerializeField] private CanvasRenderer testPanel_canvasRenderer;
+    [SerializeField] private Image testPanel_image;
+    [SerializeField] private TestPanel testPanel;
+    [SerializeField] private TextMeshProUGUI customTMP_textMeshProUGUI;
+#endregion
+
+    // 在此区域外编写逻辑
+}
+```
+
+更关键的是 `DeferredBinder`。脚本写入后 Unity 需要重新编译，此时新类型还没法马上添加到 Prefab 上。工具通过 `EditorPrefs` 记录待绑定任务，在 `AssemblyReloadEvents.afterAssemblyReload` 后重新加载 Prefab，找到新生成的脚本类型，添加或获取组件，再通过 `SerializedObject` 把扫描到的组件引用写回字段。
+
+这条链路解决的是 UI 结构与代码接口之间的一致性问题。手写字段和手动拖拽不是不行，而是规模一大就容易错。生成器把 UI 结构变成可重复扫描、可生成、可回填的流程。
+
+当前边界也值得写清楚。这个生成器强依赖 Unity Prefab API、`AssetDatabase`、`EditorPrefs`、`AssemblyReloadEvents`、`SerializedObject` 和 Unity 组件模型。未来如果要跨引擎，Prefab 扫描和字段回填必须留在 Unity Adapter；而“页面有哪些可绑定控件、页面属于哪个层级、页面资源在哪里”这些更抽象的描述，才有机会进入引擎无关的 UI Manifest。
+
+#### 六、Prefab 命名维护：工程规则也可以工具化
+
+`PrefabCreationWatcher` 是一个容易被忽略的小模块，但它体现了 KiraFramework 的另一个方向：不只是生成代码，也可以把工程命名规则工具化。
+
+它继承 `AssetPostprocessor`，监听 Prefab 导入和移动。当发现新建 Prefab 的内部名称与已有 Prefab 冲突时，会生成安全唯一的新名称，移动资产文件，修改 Prefab 内部名称，并延迟同步当前已加载场景中的 Prefab 实例名称。
+
+这件事看起来和事件、MVVM、导表关系不大，但本质仍然是同一个主题：把容易靠人工约定维护的工程规则，交给工具链在编辑器阶段处理。它说明 KiraFramework 的边界并不局限于代码生成，也可以覆盖资源命名、场景实例同步、项目约束校验等工程治理问题。
+
+不过这类工具也更说明后续需要分层。Prefab 重名处理是高度 Unity Editor 相关的能力，应该属于 UnityAdapter 或 UnityTooling，而不是未来的 Core。
+
+#### 七、MVVM 元数据：从 Attribute 扫描到 ViewModel 生成
+
+MVVM 链路由四部分组成：特性声明、编辑器扫描、Inspector 绑定和 ViewModel 生成。
+
+Model 通过特性暴露字段：
+
+```csharp
+[MVVMModel]
+public class TestHPModel
+{
+    [MVVMField]
+    public int CurrentHP;
+
+    [MVVMField]
+    public int MaxHP;
+}
+```
+
+`MVVMDataCache` 使用 `[InitializeOnLoad]` 在编辑器加载时扫描程序集。它筛选 `Assembly-CSharp` 或指定程序集，查找带 `MVVMModelAttribute` 的类，再查找带 `MVVMFieldAttribute` 的 public 字段或属性，缓存字段名和字段类型。
+
+字段类型会被转换成 C# 友好名称，例如：
+
+```text
+System.Int32 -> int
+System.Single -> float
+System.Boolean -> bool
+System.String -> string
+```
+
+`ModelFieldBindingDrawer` 是 `ModelFieldBinding` 的自定义属性绘制器。它在 Inspector 中提供两个下拉框：先选 Model，再选该 Model 暴露的字段。如果原先绑定的 Model 或字段已经不存在，它会显示 `(MISSING)` 并用红色标识。这个细节很重要，因为它已经开始把“绑定目标缺失”从运行时问题前移到编辑器可见状态。
+
+`ViewModelConfigSO` 保存 ViewModel 名称和一组字段绑定：
+
+```csharp
+public class ViewModelConfigSO : ScriptableObject
+{
+    public string ViewModelName = "NewViewModel";
+    public List<ModelFieldBinding> Bindings = new List<ModelFieldBinding>();
+}
+```
+
+`ViewModelGenerator` 则根据这些绑定生成继承 `ViewModelBase` 的类。生成结果类似：
+
+```csharp
+public class TestHPViewModel : ViewModelBase
+{
+    private int _TestHPModel_CurrentHP;
+    public int TestHPModel_CurrentHP
+    {
+        get => _TestHPModel_CurrentHP;
+        set => SetProperty(ref _TestHPModel_CurrentHP, value);
+    }
+}
+```
+
+`ViewModelBase` 实现 `INotifyPropertyChanged`，并提供 `SetProperty<T>`。它会比较旧值和新值，只有值变化时才更新 backing field 并触发属性变更通知。
+
+当前 MVVM 链路还不是完整的数据绑定框架。它没有自动把 Model 实例变化同步到 ViewModel，也没有把 ViewModel 变化自动绑定到 UI 控件。但它已经完成了一条重要链路：
+
+```text
+Model 字段声明 -> 编辑器扫描 -> Inspector 选择绑定 -> ViewModel 属性生成
+```
+
+这条链路的后续迭代重点，不应是马上做复杂绑定框架，而应先把 `MVVMDataCache` 从实时反射缓存升级为显式生成产物。也就是让生成阶段输出 `GeneratedMVVMRegistry`，Inspector 和 ViewModelGenerator 都读注册表，而不是反复在编辑器交互中扫描程序集。
+
+#### 八、Excel 配置管线：从表头到模型，再从数据到 JSON
+
+Excel 管线是当前项目里最长、也最接近“工业化导表”的模块。它由 `ExcelConfigTool` 和 `ConfigAssetPostprocessor` 组成，使用 NPOI 读写 `.xlsx`，使用 Newtonsoft.Json 生成 JSON。
+
+当前 Excel 表结构约定如下：
+
+| 行号 | 含义 |
+| --- | --- |
+| 第 1 行 | `ModelName:ClassName` |
+| 第 2 行 | 中文字段名 |
+| 第 3 行 | 英文字段名 |
+| 第 4 行 | 字段类型 |
+| 第 5 行 | 描述 |
+| 第 6 行起 | 数据区 |
+
+支持字段类型包括：
+
+```text
+string
+int / integer
+float / single / double
+bool / boolean
+```
+
+工具提供三个菜单入口：
+
+```text
+Kira工具/配置文件/0. 创建模板XlSX文件
+Kira工具/配置文件/1. 一键导表（自动生成模型 + JSON）
+Kira工具/配置文件/2. 仅生成 JSON 数据 (无需编译)
+```
+
+创建模板时，用户填写配置表文件名、模型类名和字段列表。工具会在项目根目录的 `Excels` 文件夹下生成 `.xlsx`，并写入表头与示例数据。这里有一个设计上的进步：创建模板只创建 Excel，不再同步生成模型脚本，模型生成交给后续导表流程处理。
+
+一键导表流程是：
+
+```text
+遍历 Excels/*.xlsx
+-> 从第 1 行读取 ModelName
+-> 解析第 3 行英文名和第 4 行字段类型
+-> 为每张表生成或更新 GeneratedJsonScripts/*.cs
+-> 如果脚本有实际变更，刷新 AssetDatabase 等待 Unity 编译
+-> 编译后通过 AssetPostprocessor 自动导出 JSON
+-> 如果没有触发编译或超时，使用 fallback 直接导 JSON
+```
+
+生成的模型会包含 `IConfigData`、数据类和容器类。例如：
+
+```csharp
+public interface IConfigData { int ID { get; } }
+
+public class NewConfigModel : IConfigData
+{
+    [JsonProperty("ID")]
+    public int ID { get; set; }
+
+    [JsonProperty("Name")]
+    public string Name { get; set; }
+}
+
+public class NewConfigModelContainer
+{
+    [JsonProperty("newConfigModelList")]
+    public List<NewConfigModel> Items { get; set; } = new List<NewConfigModel>();
+}
+```
+
+JSON 导出阶段通过反射查找模型类型和容器类型，只读取带 `JsonProperty` 的 public 属性。它会按表头定位 `ID` 列，跳过 `ID <= 0` 的数据行，再根据目标属性类型解析单元格值。数值、文本数字、布尔值、公式结果和日期字符串都有一定容错处理。
+
+当前生成 JSON 示例是：
+
+```json
+{
+  "newConfigModelList": [
+    {
+      "ID": 8,
+      "Name": "吉良吉影"
+    },
+    {
+      "ID": 9,
+      "Name": "妈妈"
+    }
+  ]
+}
+```
+
+这条链路已经比简单导表脚本更进一步，因为它拆出了模型生成和 JSON 导出，并处理了 Unity 编译时序问题。但它还没有完整的 Schema 系统、跨表引用校验、主键唯一性报告、版本 Manifest、产物索引和 CI 入口。这也是后文要引入 Luban 和全量构建管线的原因。
+
+#### 九、枚举生成：把枚举事实源放到资产中
+
+枚举生成由 `EnumDefinitionAsset` 和 `EnumDefinitionAssetEditor` 组成。
+
+`EnumDefinitionAsset` 保存枚举名和成员列表：
+
+```csharp
+public class EnumDefinitionAsset : ScriptableObject
+{
+    public string enumName = "NewCustomEnum";
+    public List<string> enumMembers = new List<string>();
+}
+```
+
+自定义 Inspector 会在启用时把资产文件名同步到 `enumName`，并提供“一键生成/更新枚举脚本”按钮。生成器会清洗枚举名和成员名，跳过空成员和重复成员，最后输出到：
+
+```text
+Assets/Scripts/Generated/GeneratedEnums/
+```
+
+当前 `UILayer.asset` 生成的结果是：
+
+```csharp
+public enum UILayer
+{
+    FullScreen,
+    PopWindow,
+    TopTip
+}
+```
+
+这个模块看似简单，却对架构叙事有帮助。它说明枚举也可以有作者态事实源和生成产物。未来当枚举从 `ScriptableObject` 迁移到 Luban + Xlsx 时，生成器不一定要重写；只要中间表示稳定，输入来源可以替换。
+
+#### 十、现有模块共同证明了什么
+
+把上述模块放在一起看，可以发现 KiraFramework 已经不是一堆完全无关的小工具。
+
+静态调用链证明路径型配置可以生成类型树。
+
+事件系统证明逻辑标识可以类型化，并能被泛型约束。
+
+UI View 生成证明 Prefab 结构可以投影到代码字段，并能在编译后自动回填引用。
+
+MVVM 链路证明 Model 元数据可以通过编辑器扫描进入绑定配置，再生成属性包装。
+
+Excel 管线证明配置表头可以生成 C# 模型，配置数据可以导出运行时 JSON。
+
+枚举生成证明基础定义也可以从资产事实源生成代码。
+
+这些链路的共同点是：
+
+```text
+输入不是最终目的
+生成器才是约束入口
+生成产物是业务代码消费面
+运行时尽量消费已经确定的类型和数据
+```
+
+这就是 KiraFramework 当前最有价值的结论。它的价值不是某个类写得多完整，而是多条链路已经从不同方向验证了同一个工程方向。
+
+#### 十一、当前技术边界必须讲清楚
+
+既然要讲架构，就不能只讲优点。当前项目仍然是 Unity 原型，边界很明显。
+
+输入载体强依赖 Unity。事件、资源和枚举定义使用 `ScriptableObject`；UI 输入来自 Prefab；绑定选择依赖 Inspector；菜单入口依赖 Unity Editor。
+
+生成器强依赖 Unity Editor API。`StaticCodeGenerator`、`PrefabScriptGenerator`、`EnumDefinitionAssetEditor`、`ExcelConfigTool` 都使用 `AssetDatabase` 或 Editor 菜单；Prefab 回填依赖 `SerializedObject`、`PrefabUtility` 和 `AssemblyReloadEvents`。
+
+运行时强依赖 Unity。`KiraObject`、`UIBase`、`UIManager` 都围绕 `MonoBehaviour`、`GameObject`、`Canvas`、`Transform` 和 `Resources.Load` 展开。
+
+配置系统还没有统一中间表示。静态调用链读 `MappingConfigSO`，UI 生成器读 Prefab，MVVM 扫程序集，Excel 工具读 `.xlsx`，枚举生成器读 `EnumDefinitionAsset`。每条生成链路都直接读自己的输入源，尚未收束到统一的 Manifest。
+
+校验和报告还不成体系。当前有一些局部检查，例如标识符清洗、缺失字段显示、Excel `ID` 列检查、参数类型冲突日志，但还没有统一的 `ValidationReport`、`GenerationReport`、`VersionManifest` 和 `ArtifactIndex`。
+
+这些边界不是对项目的否定。相反，它们正好指出下一阶段要迭代什么：不是继续无序增加按钮，而是把已有链路统一成可校验、可报告、可迁移的配置编译系统。
+
+### 实现方案
+
+#### 一、下一阶段目标：从“工具集合”走向“配置编译管线”
+
+如果只从短期效率看，KiraFramework 可以继续增加更多 Unity 菜单：生成本地化 key、生成音频 key、扫描场景、生成 UI 路由、导出更多 JSON。这样确实会让项目短期更方便，但也会带来一个风险：每个按钮都有自己的输入、校验、生成和输出，最后工具越来越多，权威事实源越来越不清楚。
+
+工业化迭代的目标应该换一个角度。不要把 KiraFramework 看成按钮集合，而要看成配置编译管线。它应该具备以下特征：
+
+```text
+统一输入语义
+统一中间表示
+统一校验规则
+统一生成调度
+统一报告产物
+明确运行时抽象
+明确引擎适配边界
+```
+
+这并不意味着马上推翻现有代码。相反，最稳妥的做法是先把现有输入都适配到统一中间表示，再让已有生成器逐步改成消费中间表示。这样每一步都能保留现有成果。
+
+#### 二、引入 KiraManifest 作为统一中间表示
+
+当前最大的问题不是输入来自 `ScriptableObject` 还是 Excel，而是生成器直接依赖各自输入源。静态调用链读 `MappingConfigSO`，MVVM 读程序集反射结果，Excel 工具读 `.xlsx`，UI 生成器读 Prefab。只要这种结构不改，后续迁移到 Luban + Xlsx 就会变成多处重写。
+
+更好的结构是引入统一中间表示 `KiraManifest`。它不关心输入最初来自哪里，只表达 KiraFramework 关心的工程语义。
+
+可以先设计成：
+
+```text
+KiraManifest
+    StaticDefs
+        EventDefs
+        AssetDefs
+        UIPageKeyDefs
+        ConfigTableKeyDefs
+    EnumDefs
+    UiPageDefs
+    ViewModelDefs
+    ConfigTableDefs
+    ResourceDefs
+    ValidationItems
+    SourceIndex
+```
+
+`StaticDefs` 负责描述所有静态调用链相关定义。它不再只有 `PathKeys` 和 `FinalValue`，而应包含领域类型、生成策略、值类型和校验规则。
+
+`EnumDefs` 负责枚举名、成员、显示名、描述、来源文件等。
+
+`UiPageDefs` 负责页面名、Prefab 或资源地址、层级、缓存策略、打开方式、是否允许重复打开等。
+
+`ViewModelDefs` 负责 ViewModel 名称、绑定字段、字段类型、字段别名、只读性、默认值和来源。
+
+`ConfigTableDefs` 负责表名、模型名、字段定义、主键、索引、引用关系、导出目标和运行时容器。
+
+`SourceIndex` 记录每个定义来自哪个输入源，例如某个 `.asset`、某张 `.xlsx`、某个 Prefab 或某个 Attribute 扫描结果。
+
+引入 Manifest 后，流程变成：
+
+```text
+读取 ScriptableObject / Prefab / Excel / Attribute
+-> 构建 KiraManifest
+-> 校验 KiraManifest
+-> 各生成器消费 Manifest
+-> 输出代码、JSON、报告和索引
+```
+
+这一步的好处是立刻可见的。即使短期内输入源仍然不变，生成器之间也开始共享同一种语义结构。未来要把事件和资源定义从 `ScriptableObject` 迁到 Xlsx，只需要新增一个 Xlsx 输入适配器，把表内容转成相同的 `EventDefs` 或 `AssetDefs`。
+
+#### 三、静态调用链升级为领域值类型系统
+
+当前 `MappingEntry` 只有：
+
+```text
+PathKeys
+FinalValue
+```
+
+这让生成器只能做两种判断：`FinalValue` 为空就是事件类型，非空就是字符串常量。原型阶段这很清爽，但工业化阶段不够。
+
+真实项目里的静态 key 往往有不同领域：
+
+| 领域 | 例子 | 推荐生成产物 |
+| --- | --- | --- |
+| EventKey | `GamePlay.GameStart` | 实现事件接口的类型，可附带 Payload 元数据 |
+| ResPath | `UI.Panel.TestPanel` | 资源描述符或路径常量 |
+| UIPageKey | `Page.MainGamePanel` | 页面描述符，包含层级、路径、缓存策略 |
+| ConfigTableKey | `Config.Item` | 配置表访问描述 |
+| EnumKey | `UILayer.FullScreen` | 枚举或枚举成员引用 |
+| LocalizationKey | `Text.Main.Title` | 本地化文本 key |
+| AudioCueKey | `Audio.UI.Click` | 音频事件或音频资源描述 |
+| SceneKey | `Scene.Battle` | 场景加载描述 |
+
+这些东西都可以表现为字符串，但不能都按字符串处理。资源路径需要校验资源存在；事件需要校验 Payload 类型；UI 页面需要校验 Prefab 和层级；配置表需要校验表定义；本地化 key 需要校验语言包覆盖率。
+
+因此 Manifest 中的静态定义应该从路径和值升级为：
+
+```text
+StaticDef
+    Domain
+    PathKeys
+    LeafKind
+    Value
+    ValueType
+    PayloadType
+    GeneratorStrategy
+    ValidationRules
+    Source
+```
+
+生成器再根据 `Domain + GeneratorStrategy` 决定输出什么。比如：
+
+```text
+Domain = EventKey
+    -> 生成 class SomeEvent : IKiraEventKey
+    -> 若声明 PayloadType，额外生成事件元数据或泛型约束辅助
+
+Domain = ResPath
+    -> 生成 const string 或 AssetDescriptor
+    -> 校验资源路径存在
+
+Domain = UIPageKey
+    -> 生成 UIPageDescriptor
+    -> 包含 layer、prefabPath、cacheMode、openPolicy
+
+Domain = ConfigTableKey
+    -> 生成 ConfigTableDescriptor
+    -> 指向表模型、JSON 路径或配置服务入口
+```
+
+这会让静态调用链从“字符串和事件类混合生成器”升级成“领域接口生成系统”。业务代码拿到的不只是更好看的路径，而是带语义的访问入口。
+
+#### 四、Luban + Xlsx 的正确定位：配置编译底座
+
+后续提到 Luban 时，要避免一个误区：不要把 Luban 理解成“拿来替换 KiraFramework 的全部生成器”。Luban 更适合作为配置结构、Schema 校验、多语言代码生成和运行时数据导出的底座。KiraFramework 则负责围绕自身工程语义生成静态 API、UI 描述符、ViewModel 注册表和引擎适配产物。
+
+可以这样分工：
+
+```text
+Luban
+    负责 Xlsx Schema
+    负责配置数据合法性
+    负责基础模型生成
+    负责 JSON / bytes / 多语言目标导出
+    负责常规表引用校验
+
+Kira Toolchain
+    负责读取 Luban 产物或 Luban 中间定义
+    负责生成 Kira 静态调用链
+    负责生成事件、资源、UI、ViewModel 的领域 Descriptor
+    负责 Unity Adapter 所需的绑定、菜单、Prefab 扫描产物
+    负责 Kira 维度的报告和产物索引
+```
+
+也就是说，Luban 是配置编译底座，Kira 是工程接口编译层。两者应该形成上下游，而不是互相替代。
+
+推荐迁移顺序是：
+
+1. 先迁移枚举定义。枚举结构简单，风险最低，可以用它验证 Xlsx -> Luban -> Kira Manifest -> enum 生成的链路。
+2. 再迁移事件定义。事件 key 的结构接近当前 `MappingConfigSO`，适合验证领域值类型系统。
+3. 再迁移资源路径定义。资源路径需要加入存在性校验，能推动 ValidationReport 成型。
+4. 再迁移普通业务配置表。这里可以充分利用 Luban 的 Schema 和导出能力。
+5. 再迁移 UI 页面描述。页面描述比普通 key 复杂，需要先确定 `UIPageDescriptor` 的字段。
+6. 最后迁移 ViewModel 描述。ViewModel 涉及 C# Attribute、源码扫描、绑定配置，适合在 Manifest 和注册表稳定后再做。
+
+这样的顺序比一次性把所有 `ScriptableObject` 推倒重来更稳。每一步都能形成产物，也都能回退。
+
+#### 五、拆分增量 API 生成与全量权威导出
+
+当前 Excel 工具已经初步拆分了模型生成和 JSON 导出，并考虑了 Unity 编译时序。但后续还要更明确地区分两个目标。
+
+第一个目标是开发态即时反馈。开发者新增一个事件、资源路径、枚举、页面或字段后，希望尽快生成 C# API，让 IDE 能补全，让编译器能发现引用问题。这条链路应该快，可以增量，可以只处理受影响输入。
+
+第二个目标是构建态权威一致。提交、CI、打包和发布时，需要确认所有配置、引用、资源、主键、外键、枚举、页面描述和运行时数据都一致。这条链路不一定最快，但必须完整、可重复、可报告。
+
+因此建议拆成：
+
+```text
+增量 API 生成
+    面向本地开发
+    输入：变更的局部配置或资产
+    输出：静态接口、枚举、ViewModel 注册表、页面描述等开发态产物
+    特点：快、局部、可提示告警，但不作为最终权威
+
+全量权威导出
+    面向提交、CI、构建和发布
+    输入：完整配置和资源索引
+    输出：全部代码产物、运行时数据、ValidationReport、GenerationReport、VersionManifest、ArtifactIndex
+    特点：慢一些、覆盖完整、失败即阻断构建
+```
+
+伪代码可以这样表达：
 
 ```pseudo
 function RunIncrementalApiBuild(changedInputs):
-    manifestPatch = BuildPatch(changedInputs)
-    ValidatePatch(manifestPatch)
-    GenerateStaticApis(manifestPatch)
-    WriteIncrementalReport(manifestPatch)
+    patch = BuildManifestPatch(changedInputs)
+    report = ValidatePatch(patch)
+    GenerateDeveloperArtifacts(patch)
+    WriteIncrementalReport(patch, report)
 
 function RunFullAuthoritativeBuild():
     manifest = BuildFullManifest()
-    ValidateAll(manifest)
+    report = ValidateAll(manifest)
+    if report.HasBlockingError:
+        FailBuild(report)
     GenerateAllArtifacts(manifest)
     ExportRuntimeData(manifest)
-    WriteFullReport(manifest)
+    WriteReports(manifest, report)
 ```
 
-增量链路追求反馈速度，全量链路追求权威一致。两者必须在报告中清楚标识。
+这能避免一个很常见的问题：本地工具为了快做了局部生成，结果团队误以为它就是最终权威。规则应该明确：增量链路服务开发体验，全量链路服务工程可信度。
 
-#### 八、验收标准
+#### 六、ViewModel 元数据从实时反射改成生成注册表
 
-KiraFramework 下一阶段应满足：生成器不直接依赖原始输入；所有输入能进入 Manifest；静态调用链支持至少几类领域化叶子；增量和全量链路权责清楚；ViewModel 元数据有注册表；Luban 产物能接入 Kira 生成器；Unity 依赖集中在 Adapter；每次生成有报告；CI 只接受全量校验通过的产物。
+当前 `MVVMDataCache` 在编辑器加载时反射扫描程序集，这对原型很方便，但长期会有几个问题。
 
-如果这些标准达不到，框架仍然只是多个工具的集合，而不是工业化管线。
+第一，实时反射依赖 Unity 域加载状态。脚本刚改完、编译未完成或程序集重载时，Inspector 里的数据可能短暂不稳定。
 
+第二，缓存没有明确版本。字段删除或重命名后，虽然 Drawer 能显示 `(MISSING)`，但缺少统一报告和输入签名。
+
+第三，跨引擎或命令行工具链难以复用。实时扫描 Unity 程序集是 Unity Editor 工作流的一部分，不适合作为核心数据来源。
+
+第四，校验难以集中。字段命名冲突、类型不支持、绑定重复、只读字段、默认值等问题如果都散在 Drawer 和 Generator 里，后续很难维护。
+
+推荐做法是把 Attribute 当作一种作者态声明，但在生成阶段扫描并输出注册表：
+
+```text
+C# Attribute
+-> MVVM Source Scanner
+-> GeneratedMVVMRegistry
+-> Inspector Drawer 读取注册表
+-> ViewModelGenerator 读取注册表
+-> ValidationReport 记录缺失和冲突
+```
+
+`GeneratedMVVMRegistry` 可以是 C# 文件，也可以是 JSON/YAML 等中间文件。早期为了 Unity 使用方便，可以先生成 C# 静态注册表：
+
+```csharp
+public static class GeneratedMVVMRegistry
+{
+    public static readonly ModelDef[] Models = ...
+}
+```
+
+注册表中至少应包含：
+
+```text
+ModelFullName
+ModelDisplayName
+FieldName
+FieldDisplayName
+FieldType
+IsProperty
+IsReadOnly
+SourceLocation
+```
+
+这样 Inspector 不再负责发现事实，只负责展示事实；ViewModel 生成器不再依赖实时反射，只依赖生成产物；构建流程也能判断注册表是否过期。
+
+#### 七、UI 体系从 Prefab 扫描走向页面描述符
+
+当前 UI 生成器能扫描 Prefab 并生成 View 字段，但页面级元数据还比较分散。例如页面属于哪个层级由 `UIBase.Layer` 子类实现决定；Prefab 路径来自静态资源路径；是否缓存由 `UIManager` 的打开字典隐含决定；打开策略、关闭策略、遮罩策略、动画策略还没有进入统一配置。
+
+后续可以引入 `UIPageDescriptor`：
+
+```text
+UIPageDescriptor
+    PageKey
+    ViewType
+    PrefabPath
+    Layer
+    CacheMode
+    OpenPolicy
+    ClosePolicy
+    BlockInput
+    DefaultDataType
+    Source
+```
+
+生成结果可以是：
+
+```csharp
+public static class KiraUIPage
+{
+    public static readonly UIPageDescriptor MainGamePanel = new UIPageDescriptor(...);
+}
+```
+
+业务层打开页面时，不再直接传 `prefabPath` 字符串，而是传描述符：
+
+```csharp
+uiRuntime.Show(KiraUIPage.MainGamePanel, data);
+```
+
+UnityAdapter 再把 `PrefabPath` 交给具体资源系统。早期可以继续用 `Resources.Load`，后续可以替换成 Addressables、YooAsset 或 AssetBundle。这样资源系统变化不会影响业务层，也不会影响 Manifest 的页面语义。
+
+Prefab 扫描仍然有价值，但它应该负责 View 内部字段绑定；页面描述符负责页面级语义。两者拆开以后，UI 工具链会清晰很多。
+
+#### 八、Core、Toolchain、UnityAdapter 与未来 UnrealAdapter 的边界
+
+如果 KiraFramework 只服务当前 Unity 工程，可以暂时把所有代码放在一起。但既然已经讨论工业化和跨引擎，就要尽早明确边界。
+
+建议拆成：
+
+```text
+Kira.Core
+    Manifest 数据结构
+    领域定义模型
+    运行时抽象接口
+    与引擎无关的 Descriptor
+
+Kira.Toolchain
+    输入适配
+    Manifest 构建
+    校验规则
+    代码生成
+    数据导出
+    报告生成
+    产物索引
+
+Kira.UnityAdapter
+    ScriptableObject 输入适配
+    Unity Prefab 扫描
+    Unity Editor 菜单
+    AssetDatabase 刷新
+    SerializedObject 回填
+    Unity UI Runtime
+    Resources / Addressables / YooAsset 资源适配
+
+Kira.UnrealAdapter
+    UE 资产输入适配
+    UMG Widget 扫描或描述
+    UE 编辑器入口
+    UE 资源加载适配
+    UE UI Runtime
+```
+
+运行时抽象可以从几个接口开始：
+
+```text
+IAssetProvider
+    Load<T>(AssetDescriptor descriptor)
+
+IConfigProvider
+    GetTable<TConfig>()
+    GetById<TConfig>(int id)
+
+IUIRuntime
+    Show(UIPageDescriptor page, object data)
+    Hide(UIPageDescriptor page)
+    Close(UIPageDescriptor page)
+
+IEventRuntime
+    Register<TEvent>(Action listener)
+    Fire<TEvent>()
+```
+
+当前的 `UIManager`、`EventManager` 和 `Resources.Load` 可以看作 Unity 早期实现。不要急着一次性抽象完，但要避免继续把 Unity 细节写进未来的 Core。
 
 #### 九、校验体系应先于功能扩张
 
-工具链越强，错误前移越重要。KiraFramework 后续至少应建立路径冲突检测、非法标识符检测、重复 key 检测、事件 Payload 类型存在性检测、资源引用存在性检测、UI 页面定义完整性检测、ViewModel 字段暴露合法性检测、配置主键和跨表引用检测。生成器不能只负责产出文件，也要负责阻止不可信输入进入运行时。
+生成器越多，校验越重要。否则工具链只是更快地产出更多可能不可信的文件。
 
-校验结果应有等级。阻断错误会让构建失败，例如重复主键、引用不存在、生成代码非法；警告允许本地继续，但应进入报告，例如未使用定义、命名风格不一致、资源缺少标签。这样工具链既严格，又不会把所有小问题都变成无法工作的阻塞。
+KiraFramework 后续至少应该建立以下校验：
 
-#### 十、ArtifactIndex 是大型生成系统的导航图
+| 校验项 | 说明 |
+| --- | --- |
+| 标识符合法性 | 类名、字段名、枚举名、命名空间是否能生成合法 C# |
+| 路径重复 | 静态调用链中是否存在重复路径或冲突叶子 |
+| 领域冲突 | 同一路径是否被不同领域以不兼容方式定义 |
+| 事件 Payload | Payload 类型是否存在、是否可序列化、是否与调用约定一致 |
+| 资源存在性 | 资源路径、地址或 GUID 是否能定位到资产 |
+| UI 页面完整性 | 页面是否有层级、资源、View 类型和打开策略 |
+| Prefab 绑定 | 生成字段是否都能回填，目标组件是否缺失 |
+| MVVM 字段 | 绑定字段是否存在、类型是否支持、注册表是否过期 |
+| 配置主键 | ID 是否存在、唯一、类型正确 |
+| 配置引用 | 外键、枚举引用、资源引用是否有效 |
+| 导出一致性 | 增量产物和全量产物是否存在不可解释差异 |
 
-当生成器数量增加后，团队需要知道某个输入表、某个 Prefab 或某个 Attribute 最终影响了哪些文件。ArtifactIndex 可以记录输入到产物的映射：`Events.xlsx` 生成哪些事件键，`UIPages.xlsx` 生成哪些页面描述符，某个 Model Attribute 影响哪个 ViewModel 注册表。这样代码评审、CI 缓存、增量生成和问题回溯都会更清晰。
+校验结果要分级。阻断错误会导致生成或构建失败，例如非法 C# 标识符、重复主键、引用不存在、生成代码无法编译。警告可以允许本地继续，例如未使用定义、描述缺失、命名风格不统一、资源标签缺失。但警告必须进入报告，不能静默吞掉。
 
-没有产物索引，生成系统会变成黑盒。开发者只看到大量文件变化，却不知道变化来自哪个输入。ArtifactIndex 能让生成器从“会写文件”升级为“可解释的编译系统”。
+#### 十、生成报告和产物索引要成为一等产物
+
+工业化工具链不能只把代码写出来，还要回答几个问题：
+
+这次生成读了哪些输入？
+
+哪些输入发生了变化？
+
+生成了哪些文件？
+
+哪些文件没变？
+
+哪些错误阻断了生成？
+
+哪些警告需要处理？
+
+这是增量结果还是全量结果？
+
+某个生成文件来自哪个源表、哪个 Prefab、哪个资产或哪个 Attribute？
+
+为此建议输出四类产物。
+
+| 产物 | 作用 |
+| --- | --- |
+| `GenerationReport.md/json` | 记录本次生成模式、输入源、输出文件、耗时和变化摘要 |
+| `ValidationReport.md/json` | 记录错误、警告、来源位置和阻断原因 |
+| `VersionManifest.json` | 记录输入签名、生成时间、工具版本、Schema 版本 |
+| `ArtifactIndex.json` | 记录输入定义与生成产物之间的映射关系 |
+
+`ArtifactIndex` 尤其重要。当生成系统变大以后，代码评审中经常会看到大量生成文件变化。如果没有索引，开发者很难判断变化来自哪张表、哪个 Prefab 或哪个配置项。有了索引，就能从输入追到产物，也能从产物追回输入。
+
+例如：
+
+```text
+Events.xlsx:GamePlay.GameStart
+    -> Assets/Scripts/Generated/KiraStatics/KiraEventKey.cs
+
+UIPages.xlsx:MainGamePanel
+    -> Assets/Scripts/Generated/KiraUI/KiraUIPage.cs
+    -> Assets/Scripts/Generated/GeneratedUI/MainGamePanel.cs
+
+TestHPModel.CurrentHP
+    -> Assets/Scripts/Generated/MVVM/GeneratedMVVMRegistry.cs
+    -> Assets/Scripts/MVVM/VMSO/TestHPViewModel.cs
+```
+
+这会让生成器从“会写文件”升级成“可解释的编译系统”。
+
+#### 十一、推荐落地路线
+
+为了降低风险，推荐按以下阶段推进。
+
+第一阶段，整理现有工具链。保持输入源不变，先补齐文档、菜单命名、生成路径约定和基础报告。让每条现有链路都有清楚的输入、输出和失败条件。
+
+第二阶段，引入 `KiraManifest`。先不改用户使用方式，只在内部把 `MappingConfigSO`、`EnumDefinitionAsset`、Excel 表头、MVVM 扫描结果转成 Manifest。生成器仍然输出原来的文件，但开始从 Manifest 读取。
+
+第三阶段，升级静态调用链。给静态定义增加 `Domain` 和 `GeneratorStrategy`，先落地 EventKey、ResPath、UIPageKey、ConfigTableKey、EnumKey 五类。不要一开始支持太多领域，避免过度泛化。
+
+第四阶段，拆分增量和全量。保留 Editor 菜单作为增量入口，同时增加全量构建入口。全量入口输出 `ValidationReport`、`GenerationReport`、`VersionManifest` 和 `ArtifactIndex`。
+
+第五阶段，MVVM 注册表化。把 `MVVMDataCache` 的实时扫描结果固化为生成产物，让 Inspector 和 ViewModelGenerator 都读注册表，并处理注册表过期提示。
+
+第六阶段，Luban 接入。先从枚举和静态 key 开始，把 Xlsx/Luban 产物转成 Manifest，再逐步迁移普通业务配置表、UI 页面描述和 ViewModel 描述。
+
+第七阶段，Adapter 拆分。把 `Resources.Load`、Prefab 扫描、`AssetDatabase`、`SerializedObject`、Unity 菜单等集中到 UnityAdapter。Core 和 Toolchain 保持引擎无关或尽量少依赖 Unity。
+
+第八阶段，CI 化。全量构建进入 CI，阻断错误导致构建失败，报告作为构建产物归档。团队提交时不再只看生成文件是否变化，还要看报告是否可信。
+
+#### 十二、风险与取舍
+
+第一个风险是过早抽象。KiraFramework 现在还处在原型到工程化的过渡阶段，如果一开始就设计过于宏大的领域系统，可能会让简单链路变复杂。应先围绕已经存在的事件、资源、UI、MVVM、Excel、枚举抽象，不要为暂时不存在的领域预留太多结构。
+
+第二个风险是输入迁移过急。如果直接把 `ScriptableObject` 全部迁到 Luban + Xlsx，但 Manifest 和报告还没稳定，就会造成生成器重写、错误定位困难和开发流程震荡。应先让现有输入进入 Manifest，再替换输入适配器。
+
+第三个风险是增量结果被误用。增量生成适合开发体验，不适合作为发布权威。必须通过报告和 CI 规则明确边界。
+
+第四个风险是 Unity 依赖继续扩散。现在很多类直接使用 Unity API 是合理的，因为项目还在 Unity 工程里。但从下一阶段开始，新功能应主动判断属于 Core、Toolchain 还是 UnityAdapter，避免把 `AssetDatabase`、`GameObject`、`MonoBehaviour` 继续写进本该引擎无关的结构。
+
+第五个风险是生成代码可读性下降。生成器越复杂，产物越需要稳定格式、清晰注释和可追溯来源。所有生成文件都应带有生成器名、来源、时间或版本信息，并尽量避免无意义的变动。
+
+#### 十三、验收标准
+
+下一阶段如果要判断 KiraFramework 是否真的从工具集合迈向工业化管线，可以用以下标准验收：
+
+1. 所有现有输入都能映射到 `KiraManifest`，生成器不再直接散读原始输入。
+2. 静态调用链至少支持 EventKey、ResPath、UIPageKey、ConfigTableKey、EnumKey 五类领域定义。
+3. 本地增量生成和全量权威导出有明确入口、报告和规则。
+4. ViewModel 元数据有显式注册表，Inspector 不再依赖实时反射作为唯一事实源。
+5. Excel/Luban 配置能生成模型、数据和 Kira 所需的静态接口或 Descriptor。
+6. Unity 相关能力集中在 UnityAdapter，Core 不直接依赖 Prefab、AssetDatabase、Canvas、Resources。
+7. 每次全量生成都会输出 `ValidationReport`、`GenerationReport`、`VersionManifest` 和 `ArtifactIndex`。
+8. CI 能运行全量校验，并在阻断错误出现时失败。
+9. 生成产物能从输入追溯，也能从产物反查输入。
+10. 文档能让新读者先理解项目做了什么，再理解为什么要迭代到 Luban 和 Manifest。
+
+达到这些标准后，KiraFramework 才能被称为一条工程化配置管线，而不仅是 Unity Editor 里的几个好用工具。
 
 ### 总结
 
-KiraFramework 当前最值得保留和放大的，不是某几个具体类，而是已经验证出的工程方向：把配置和元数据视为事实源，把代码与运行时数据视为编译产物，把编辑器工具和生成器视为开发流程的主角。事件、资源、UI、MVVM、配置和枚举都可以纳入同一条“输入 -> Manifest -> 校验 -> 生成 -> 消费”的管线。
+KiraFramework 当前已经完成的事情，可以用一句话概括：它把 Unity 项目中常见的事件键、资源路径、UI Prefab 结构、ViewModel 字段、Excel 配置和枚举定义，从分散的手工约定变成了可生成、可编译、可被运行时消费的产物。
 
-下一阶段的重点，应是从零散工具走向统一领域编译体系。静态调用链要从字符串尾值升级为领域值类型系统；导表要拆成开发态增量 API 生成和构建态全量权威导出；ViewModel 要从实时反射扫描走向生成注册表；Luban + Xlsx 要作为配置编译底座接入，而不是粗暴替代所有 Kira 生成器；Unity 依赖要下沉到 Adapter，为未来跨引擎迁移留下结构空间。
+这个项目的核心思路是“前移约束”。事件名不要等运行时才发现拼错，资源路径不要散落在业务代码里，Prefab 字段不要靠人手拖，ViewModel 属性不要重复手写，Excel 表结构不要和模型类各自维护。能在作者态描述的事实，就进入配置；能在生成阶段确定的接口，就交给生成器；能用类型系统约束的调用，就不要继续用裸字符串。
 
-按“Manifest 统一语义 -> 值类型系统 -> 增量/全量双轨 -> MVVM 缓存化 -> Luban 化 -> Core/Adapter 拆分”的顺序推进，KiraFramework 才能从 Unity 编辑器工具集，成长为一套具备校验、报告、迁移能力和工业化潜力的配置与元数据工程平台。
+从源码看，项目已经跑通了多条链路：`MappingConfigSO` 到 `KiraEventKey` 和 `KiraAssetsPath`，`IKiraEventKey` 到 `EventManager`，Prefab 到 `GeneratedUI` 和字段回填，Attribute 到 MVVM 绑定和 ViewModel，Excel 表头到模型类再到 JSON，`EnumDefinitionAsset` 到 C# 枚举。这些链路共同说明 KiraFramework 更像一个面向游戏工程元数据的领域编译器雏形。
 
-## 知识缺口
+下一阶段的重点，不应是继续无序增加菜单按钮，而应是把现有工具统一到一条配置编译管线里。先引入 `KiraManifest`，让所有输入进入统一中间表示；再把静态调用链升级为领域值类型系统；再拆分增量 API 生成和全量权威导出；再把 MVVM 元数据注册表化；再让 Luban + Xlsx 承担配置编译底座；最后把 Unity 依赖下沉到 Adapter，为跨引擎和 CI 化留下空间。
 
-1. 当前 KiraFramework 具体代码版本、目录结构和生成器实现细节可能继续变化，需要以实际仓库为准校验类名、调用链和工具入口。
-2. Luban 的 Schema、代码生成、多语言目标和导出格式配置，需要结合项目实际表结构进一步设计。
-3. Unity 到 UE 的适配边界需要在具体 UI 系统、资源系统和构建系统选型后进一步细化。
-4. 增量生成与全量生成的一致性验证，需要通过真实项目规模和 CI 流程测试后确定。
+这样推进后，KiraFramework 的定位会更清晰：它不是替代 Unity，也不是替代 Luban，而是在游戏工程中负责把“配置事实”编译成“开发接口、运行时数据和校验报告”的工具链。它的最终价值，不是少写几行代码，而是让项目里的关键约定变得可追踪、可校验、可生成、可迁移。
 
 ## 元数据
-
 - **创建时间：** 2026-04-22 00:00
-- **最后更新：** 2026-05-06 00:00
-- **版本：** v2.0
+- **最后更新：** 2026-05-29 00:00
+- **作者：** 吉良吉影
 - **分类：** KiraFramework讲解和迭代日志
-- **标签：** KiraFramework, 代码生成, Unity工具链, Luban, Xlsx, 架构设计, 工程化, 跨引擎迁移
-- **来源简注：** 基于 KiraFramework 架构讲解、工业化扩展与 Luban 配置管线迭代主题重新编写，聚焦配置事实源、生成管线、Manifest、中间表示和引擎适配边界。
+- **标签：** KiraFramework, Unity工具链, 代码生成, MVVM, Excel导表, Luban, Xlsx, Manifest, 架构设计, 工程化, 跨引擎迁移
+- **来源：** 基于 KiraFramework-Analysis 项目 README、源码结构、现有架构讲解文档和 Luban 配置管线迭代主题重新整理，重写重点为先解释项目做了什么和为什么这样做，再展开后续工业化迭代方案。
 
 ---
-*文档基于讨论主题重写整理*
+*文档基于与吉良吉影的讨论，由小雅整理*
