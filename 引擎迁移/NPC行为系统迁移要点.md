@@ -1,4 +1,4 @@
-# AI 系统迁移要点
+# NPC行为系统迁移要点
 
 ## 摘要
 从 Unity 迁移到 Unreal Engine 时，AI 系统的核心难点不在于找到一个“等价 API”，也不在于把原有脚本状态机改写成行为树节点，而在于重新建立行为组织、感知输入、决策状态、导航移动、动作执行、数据配置、调试观测和团队协作的完整工程体系。Unity 项目中的 AI 可能由 MonoBehaviour、ScriptableObject、NavMeshAgent、自定义状态机、协程、插件行为树、触发器与动画事件组合而成；UE 则提供 `AIController`、`Pawn`、Behavior Tree、Blackboard、AI Perception、Navigation System、EQS、Gameplay Tasks、Gameplay Ability、Smart Object、Mass、StateTree、数据资产和 Gameplay Debugger 等更系统化的原生能力。
@@ -207,7 +207,7 @@ AI 系统迁移的本质，是从“脚本驱动行为”转向“框架约束�
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 引擎迁移
-- **标签：** Unity, Unreal Engine, AI编程
+- **标签：** Unity, Unreal Engine, 引擎迁移
 - **来源简注：** 基于 Unity 到 Unreal Engine 的 AI 系统迁移主题重新编写，聚焦职责边界、行为组织、感知导航、战斗执行、调试验收和性能预算。
 
 ---
