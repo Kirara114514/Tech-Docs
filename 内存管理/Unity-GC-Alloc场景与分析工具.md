@@ -1129,7 +1129,7 @@ GC Alloc 是 Unity 性能优化中最基础、最常见，也最容易被误解�
 - **最后更新：** 2026-05-06 00:00
 - **版本：** v2.0
 - **分类：** 内存管理
-- **标签：** Unity, GC, GC Alloc, Profiler, Memory Profiler, 性能优化, 托管堆, 内存分析
+- **标签：** Unity、GC、性能分析、Memory Profiler、性能优化、托管堆
 - **来源简注：** 基于 Unity GC Alloc 场景与分析工具主题重新编写，聚焦托管分配来源、Profiler 工具链、引用链分析和性能回归。
 
 ---

@@ -266,5 +266,5 @@ TextMeshPro 富文本、聊天表情标记、颜色标签、道具链接和自�
 - 更新时间：2026-05-10
 - 版本：2.0
 - 分类：算法与数据结构
-- 标签：字符串、KMP、Rabin-Karp、Manacher、滑动窗口、回文、StringBuilder、C#、Unity
+- 标签：字符串、算法与数据结构、回文、StringBuilder、C#、Unity
 - 来源简注：基于既有主题重写为正式技术文档

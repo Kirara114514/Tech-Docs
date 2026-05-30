@@ -217,7 +217,7 @@ Unity UGUI 渲染与像素填充率优化的关键，是减少 GPU 做无意义�
 - **最后更新：** 2026-05-09 00:00
 - **版本：** v2.0
 - **分类：** 性能优化
-- **标签：** Unity, UGUI, Overdraw, Fill Rate, Graphic Raycaster, Mask, Frame Debugger, Shader
+- **标签：** Unity、UGUI、图形学
 - **来源简注：** 基于 Unity UGUI 渲染与像素填充率优化主题重新编写，聚焦 GPU 工作量、Overdraw、透明混合、遮罩、Raycast、UI Shader、RenderTexture、World Space UI 和真机验证。
 
 ---

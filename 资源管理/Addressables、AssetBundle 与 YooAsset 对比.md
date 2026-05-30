@@ -91,5 +91,5 @@ Addressables、AssetBundle 与 YooAsset 不存在脱离场景的绝对优劣。�
 - 最后更新时间：2026-05-11
 - 版本：2.0
 - 分类：资源管理
-- 标签：Addressables、AssetBundle、YooAsset、资源方案选型、热更新、版本治理
+- 标签：资源管理、热更新
 - 来源简注：基于既有主题重写为正式技术文档

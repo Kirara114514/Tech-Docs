@@ -194,7 +194,7 @@ Unity UGUI 的 Canvas 与元素管理，是 UI 性能、稳定性和可维护性
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 性能优化
-- **标签：** Unity, UGUI, Canvas, Canvas重建, LayoutGroup, RectTransform, 对象池, 动态列表
+- **标签：** Unity、UGUI、Canvas、对象池
 - **来源简注：** 基于 Unity UGUI Canvas 与 UI 元素管理主题重新编写，聚焦重建机制、分层策略、生命周期、对象池、虚拟列表、事件订阅和工程化验收。
 
 ---

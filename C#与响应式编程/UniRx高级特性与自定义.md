@@ -239,7 +239,7 @@ UniRx 的高级特性不是一组炫技 API，而是一套关于流生命周期�
 - **最后更新：** 2026-05-06 00:00
 - **版本：** v2.0
 - **分类：** C#与响应式编程
-- **标签：** UniRx, 响应式编程, IObservable, Subject, Hot Observable, Cold Observable, 调度器, 自定义操作符, TestScheduler
+- **标签：** UniRx
 - **来源简注：** 基于 UniRx 高级特性与自定义扩展主题重新编写，聚焦流语义、调度、测试、资源释放和工程治理。
 
 ---

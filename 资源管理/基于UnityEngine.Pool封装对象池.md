@@ -142,5 +142,5 @@ public sealed class PoolEntry
 - 最后更新时间：2026-05-11
 - 版本：2.0
 - 分类：资源管理
-- 标签：UnityEngine.Pool、ObjectPool、对象池、生命周期管理、资源管理、性能优化
+- 标签：对象池、C#、资源管理、性能优化
 - 来源简注：基于既有主题重写为正式技术文档

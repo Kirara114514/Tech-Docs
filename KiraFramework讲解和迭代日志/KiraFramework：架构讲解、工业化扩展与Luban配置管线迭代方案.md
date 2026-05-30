@@ -1148,7 +1148,7 @@ KiraFramework 当前已经完成的事情，可以用一句话概括：它把 Un
 - **最后更新：** 2026-05-29 00:00
 - **作者：** 吉良吉影
 - **分类：** KiraFramework讲解和迭代日志
-- **标签：** KiraFramework, Unity工具链, 代码生成, MVVM, Excel导表, Luban, Xlsx, Manifest, 架构设计, 工程化, 跨引擎迁移
+- **标签：** KiraFramework、Unity、代码生成、MVVM、Luban、架构设计、引擎迁移
 - **来源：** 基于 KiraFramework-Analysis 项目 README、源码结构、现有架构讲解文档和 Luban 配置管线迭代主题重新整理，重写重点为先解释项目做了什么和为什么这样做，再展开后续工业化迭代方案。
 
 ---

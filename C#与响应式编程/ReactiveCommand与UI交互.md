@@ -242,7 +242,7 @@ public sealed class CommandState
 - **最后更新：** 2026-05-06 00:00
 - **版本：** v2.0
 - **分类：** C#与响应式编程
-- **标签：** ReactiveCommand, UniRx, Unity UI, MVVM, ViewModel, 命令模式, 异步交互, 生命周期管理
+- **标签：** MVVM、UniRx、UGUI、C#
 - **来源简注：** 基于 ReactiveCommand 与 Unity UI 交互主题重新编写，聚焦命令边界、异步策略、错误通道和交互治理。
 
 ---
