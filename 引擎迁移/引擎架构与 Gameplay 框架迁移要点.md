@@ -168,7 +168,7 @@ Gameplay 架构如果只从程序角度看，会很容易把所有重要逻辑�
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 引擎迁移
-- **标签：** Unreal Engine、引擎迁移
+- **标签：** Unreal Engine, 引擎迁移
 - **来源简注：** 基于 Unity 到 Unreal Engine 的引擎架构与 Gameplay Framework 迁移主题重新编写，聚焦对象职责、生命周期、控制权、状态归属、Subsystem 和 Authority 边界。
 
 ---

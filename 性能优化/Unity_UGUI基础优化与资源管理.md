@@ -153,7 +153,7 @@ UGUI 基础优化的根基是资源管理。DrawCall、Canvas 重建、Overdraw�
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 性能优化
-- **标签：** Unity、UGUI、资源管理
+- **标签：** Unity, UGUI, 资源管理
 - **来源简注：** 基于 Unity UGUI 基础优化与资源管理主题重新编写，聚焦资源导入、Sprite Atlas、纹理内存、TMP、RawImage、资源分域和真机验收。
 
 ---

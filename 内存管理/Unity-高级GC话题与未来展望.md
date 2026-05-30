@@ -777,7 +777,7 @@ Unity 高级 GC 优化不是某几个技巧的堆叠，而是一套围绕数据�
 - **最后更新：** 2026-05-06 00:00
 - **版本：** v2.0
 - **分类：** 内存管理
-- **标签：** Unity、GC、C#、Job System、资源管理、ScriptableObject、性能优化
+- **标签：** Unity, GC, C#, Job System, 资源管理, ScriptableObject, 性能优化
 - **来源简注：** 基于 Unity 高级 GC 话题与未来展望主题重新编写，聚焦托管堆依赖、Native 内存、资源生命周期、数据导向架构和工程化治理。
 
 ---

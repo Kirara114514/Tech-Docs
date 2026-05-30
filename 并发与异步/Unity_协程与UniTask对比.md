@@ -532,7 +532,7 @@ public async UniTask RefreshAsync(CancellationToken token) { ... }
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity、协程编程、UniTask、异步编程、选型
+- **标签：** Unity, 协程编程, UniTask, 异步编程, 选型
 - **来源简注：** 基于 Unity 协程与 UniTask 选型主题重新编写，聚焦调度模型、生命周期、取消异常、线程边界、性能成本和团队落地规则。
 
 ---
