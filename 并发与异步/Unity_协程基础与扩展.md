@@ -622,7 +622,7 @@ private IEnumerator WaitUntilOrTimeout(Func<bool> condition, float timeout, Acti
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity, 协程编程, MonoBehaviour, 异步编程
+- **标签：** Unity, C#, 协程编程, 异步编程, MonoBehaviour, 生命周期, 工程实践
 - **来源简注：** 基于 Unity 协程基础与扩展主题重新编写，聚焦迭代器状态机、PlayerLoop 调度、生命周期、Runner 封装、异常处理和性能边界。
 
 ---

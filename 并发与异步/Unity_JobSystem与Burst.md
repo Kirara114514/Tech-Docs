@@ -513,7 +513,7 @@ Job System 与 Burst 是 Unity 高性能计算的重要工具，但它们不是�
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity, Job System, ECS
+- **标签：** Unity, C#, Job System, ECS, 性能优化, 架构设计, 工程实践
 - **来源简注：** 基于 Unity Job System 与 Burst 高性能计算主题重新编写，并结合 Unity 官方文档对 NativeContainer、安全系统和 Burst 定位进行校正。
 
 ---
