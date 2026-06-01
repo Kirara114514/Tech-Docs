@@ -343,7 +343,7 @@ SphereCast 比 Raycast 更适合相机避障，因为相机有近裁剪面和体
 - **最后更新：** 2026-05-09 00:00
 - **版本：** v2.0
 - **分类：** 数学基础
-- **标签：** 数学基础, 物理系统
+- **标签：** Unity, C#, 数学基础, 物理系统, 碰撞治理, 工程实践
 - **来源简注：** 基于 Unity 射线与碰撞检测主题重新编写，聚焦 Raycast、Cast、Overlap、Collider、Rigidbody、Trigger、LayerMask、NonAlloc、调试和物理查询规范。
 
 ---
