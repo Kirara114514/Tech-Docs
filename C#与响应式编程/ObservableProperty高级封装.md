@@ -268,7 +268,7 @@ public enum SetResultKind
 - **最后更新：** 2026-05-06 00:00
 - **版本：** v2.0
 - **分类：** C#与响应式编程
-- **标签：** C#, UniRx, ObservableProperty, MVVM, Unity
+- **标签：** C#, UniRx, ObservableProperty, MVVM, Unity, 响应式编程
 - **来源简注：** 基于 ObservableProperty 高级封装主题重新编写，聚焦状态治理、写入边界、变更上下文和工程化落地。
 
 ---
