@@ -205,7 +205,7 @@ DrawCall 上升通常说明遮罩打断批处理；GPU 时间上升可能来自�
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 性能优化
-- **标签：** Unity, UGUI, RectMask2D, Canvas, Rebuild, 裁剪优化, 性能优化, 性能分析, GPU, 图形学, 工程实践
+- **标签：** Unity, UGUI, RectMask2D, Canvas, Rebuild, 性能优化, 性能分析, GPU, 图形学, 工程实践
 - **来源简注：** 基于 UGUI 遮罩与裁剪性能优化主题重新编写，聚焦 Mask、RectMask2D、模板缓冲、滚动列表、透明叠加、替代方案和团队规范。
 
 ---
