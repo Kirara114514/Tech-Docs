@@ -695,7 +695,7 @@ GAS 的学习曲线陡峭，但它的设计目标并非"让写技能更容易"�
 - **最后更新：** 2026-06-04
 - **作者：** 吉良吉影
 - **分类：** 架构设计
-- **标签：** GAS,GameplayAbilitySystem,UnrealEngine,UE,架构设计,战斗系统,网络预测,GameplayTag,GameplayEffect,AttributeSet
+- **标签：** Unreal Engine, 架构设计, GameplayAbility, 网络同步
 - **来源简注：** 基于多个 agent 的讨论内容整理扩展
 
 ---
