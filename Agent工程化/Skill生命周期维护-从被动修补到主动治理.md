@@ -209,7 +209,7 @@ L1 测试是最基础也最容易落地的一层。它测试 skill 在结构化�
 ```python
 测试用例 1：
 输入："关于 skill 生命周期维护的一个想法"
-期望输出：{ library: "Tech-Docs", category: "AI工程化" }
+期望输出：{ library: "Tech-Docs", category: "Agent工程化" }
 说明：涉及 Agent/LLM 相关内容，必然归入 Tech-Docs
 
 测试用例 2：
@@ -228,9 +228,9 @@ L1 测试是最基础也最容易落地的一层。它测试 skill 在结构化�
 说明：纯技术讨论
 
 测试用例 5：
-输入："NTR 相关幻想记录"
-期望输出：{ library: "私密文档", category: "个人幻想记录" }
-说明：涉及私密话题
+输入："这周读的书的感悟"
+期望输出：{ library: "Thoughts-Docs", category: "读书笔记" }
+说明：非技术性内容，属于思考感悟类
 ```
 
 L1 测试的执行机制使用子 Agent（spawn_subagent）模拟纯净环境：
