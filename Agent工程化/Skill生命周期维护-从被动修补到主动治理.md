@@ -100,7 +100,7 @@ Skill 的生命周期可以划分为五个阶段：Creation（创建）、Memory
 - 在 skill 的元数据部分增加一个 `memory_dependencies` 字段，显式声明它依赖哪些文件或文件片段：
 
 ```markdown
-## 元数据
+## 元数据（示例）
 - **memory_dependencies：** PROFILE.md#文档分类铁律, AGENTS.md#安全与边界
 ```
 
@@ -155,7 +155,7 @@ AGENTS.md（全局约束）> SKILL.md（技能级约束）> MEMORY.md（运行�
 在每条 skill 的元数据中添加双向依赖信息：
 
 ```markdown
-## 元数据
+## 元数据（示例）
 - **depends_on：** doc_judge, doc_write（我依赖谁）
 - **used_by：** doc_discuss（谁依赖我）
 ```
