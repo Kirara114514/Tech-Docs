@@ -560,7 +560,7 @@ Job System 的高级封装不是为了把底层概念全部藏起来，而是为
 - **最后更新：** 2026-05-08 00:00
 - **版本：** v2.0
 - **分类：** 并发与异步
-- **标签：** Unity, C#, Job System, UniTask, 异步编程, UniRx, 响应式编程, 性能优化, 架构设计, 工程实践
+- **标签：** Unity, C#, 性能优化, 异步编程, 工程治理, 响应式编程, 架构设计, UniRx, UniTask, Job System, 工程实践
 - **来源简注：** 基于 Unity Job System 高级封装与异步集成主题重新编写，聚焦 JobHandle 等待、NativeContainer 生命周期、取消清理、批处理和可观测性。
 
 ---
