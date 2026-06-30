@@ -1,20 +1,14 @@
-## 元数据
-- **创建时间：** 2026-06-30
-- **最后更新时间：** 2026-06-30
-- **作者：** 吉良吉影
-- **分类：** Agent工程化
-- **标签：** Agent,Skill,自维护,协议规范,ASMP,Heartbeat,子Agent,Skill维护
-- **来源简注：** 基于Agent自维护实践经验总结形成的正式协议规范
+# ASMP：Agent自维护协议正式规范
 
----
+## 摘要
 
-ASMP：Agent Self-Maintenance Protocol
+ASMP（Agent Self-Maintenance Protocol）是一套面向通用 Agent 框架的自维护协议，目标不是让 Agent 自动改文件，而是让 Agent 具备长期可靠的自维护闭环。协议基于 Skill、子 Agent 和 Heartbeat 三要素，定义了从执行期轻量自检、结构化 incident 记录、Heartbeat 聚类诊断、到维护期有界蒸馏和验证门控的完整流程。ASMP 不绑定任何单一框架，只要求框架具备 Skill、子 Agent 和 Heartbeat 三种能力。本文完整定义了 Skill 包标准结构、事件模型、三层自维护循环、维护阈值与动量机制、Patch 决策表、有界编辑规则、验证门控体系、子 Agent 角色设计、Library 级治理策略、MetaSkill 层设计以及自动化等级，可作为任何 Agent 框架接入自维护能力的参考规范。
 
-面向通用 Agent 框架的自维护协议 v1.0
+## 正文
 
-## 0. 核心目标
+### 背景
 
-ASMP 的目标是让 Agent 不再只是"会调用 skill"，而是能长期维护自己的 skill 体系：
+ASMP 的核心目标：让 Agent 不再只是"会调用 skill"，而是能长期维护自己的 skill 体系：
 
 - **执行时**：轻量读取 skill
 - **出错时**：记录结构化证据
@@ -37,15 +31,15 @@ ASMP 的目标是让 Agent 不再只是"会调用 skill"，而是能长期维护
 - **Skill-MAS 的 MetaSkill 愿景**：高阶编排能力本身也可以被沉淀成可进化 skill，用于任务拆解、子 Agent 设计和工作流编排。
 - **More Skills, Worse Agents? 的 Skill Shadowing 防护**：skill 库变大后，主要风险不是上下文变长，而是选错 skill。
 
----
+### 核心内容
 
-## 1. 最小依赖：三件事就够
+#### 最小依赖：三件事就够
 
 ASMP 不绑定 Claude Code、Codex、OpenClaw、QwenPaw、LangGraph、AutoGen、CrewAI 或任何单一框架。
 
 只要求框架具备三个能力：
 
-### 1.1 Skill
+##### Skill
 
 Skill 是长期能力载体。它可以是：
 
@@ -65,7 +59,7 @@ ASMP 不强制文件名，只强制逻辑结构：
 - 维护记录
 - 评估记录
 
-### 1.2 子 Agent
+##### 子 Agent
 
 子 Agent 用来做上下文隔离和角色分离。
 
@@ -81,7 +75,7 @@ ASMP 不强制文件名，只强制逻辑结构：
 - **Security Agent**：检查权限、注入和供应链风险
 - **Meta-Architect Agent**：维护多 Agent 编排策略
 
-### 1.3 Heartbeat
+##### Heartbeat
 
 Heartbeat 是定期触发器。它负责让"以后维护"真的发生。
 
@@ -95,9 +89,7 @@ Heartbeat 可以是：
 
 没有 Heartbeat，自维护会退化成"文档写得很好，但未来没人看"。
 
----
-
-## 2. 总体架构
+#### 总体架构
 
 ASMP 的核心架构如下：
 
@@ -138,9 +130,7 @@ Changelog / Eval / Backlog
 - **治理层**：维护整个 skill 库的边界、安全和规模
 - **元技能层**：沉淀更高阶的任务拆解和多 Agent 编排策略
 
----
-
-## 3. Skill 包标准结构
+#### Skill 包标准结构
 
 ASMP 推荐每个长期维护的 skill 使用以下逻辑结构：
 
@@ -173,9 +163,7 @@ meta/eval       -> skill.tests[]
 
 重点不是文件名，而是**执行上下文和维护上下文必须分离**。
 
----
-
-## 4. Skill 入口文件规范
+#### Skill 入口文件规范
 
 每个 skill 的入口文件只放执行期必需内容。
 
@@ -238,9 +226,7 @@ Prefer another skill when:
 - 维护过程碎片
 - 与其他 skill 重复的通用规则
 
----
-
-## 5. 事件模型：所有维护都从事件开始
+#### 事件模型：所有维护都从事件开始
 
 ASMP 的最小事件类型有 5 种：
 
@@ -250,7 +236,7 @@ ASMP 的最小事件类型有 5 种：
 - **SkillEvalResult**：评估结果
 - **SkillPatchEvent**：维护修改记录
 
-### 5.1 SkillUseEvent
+##### SkillUseEvent
 
 每次 skill 被调用都可以记录轻量事件：
 
@@ -269,7 +255,7 @@ result: success | partial | failed
 notes: "可选"
 ```
 
-### 5.2 SkillIncident
+##### SkillIncident
 
 遇到错误、遗漏、误触发、用户纠正时记录：
 
@@ -300,7 +286,7 @@ related_skills:
 urgency: medium
 ```
 
-### 5.3 SkillCase
+##### SkillCase
 
 成功案例也要记录，否则维护 agent 只能从失败中学习：
 
@@ -323,13 +309,11 @@ takeaways:
   - "多 Pass 迁移应进入 edge_cases"
 ```
 
----
-
-## 6. 三层自维护循环
+#### 三层自维护循环
 
 ASMP 分三层循环。
 
-### 6.1 即时循环：After-Run 自检
+##### 即时循环：After-Run 自检
 
 每次任务结束前，Execution Agent 做一次轻量自检：
 
@@ -354,7 +338,7 @@ ASMP 分三层循环。
 1. 记录 case
 2. 等待后续蒸馏
 
-### 6.2 短周期循环：Heartbeat Triage
+##### 短周期循环：Heartbeat Triage
 
 Heartbeat 每天或每 N 次 skill 使用后运行：
 
@@ -372,7 +356,7 @@ Heartbeat 每天或每 N 次 skill 使用后运行：
 - 疑似 shadowing 列表
 - 建议下次维护范围
 
-### 6.3 维护循环：Distillation Pass
+##### 维护循环：Distillation Pass
 
 当满足条件时，启动 "skill-maintainer" 子 Agent：
 
@@ -386,13 +370,11 @@ Heartbeat 每天或每 N 次 skill 使用后运行：
 8. 应用有界修改
 9. 更新 changelog、incident status、eval、backlog
 
----
-
-## 7. Heartbeat 调度策略
+#### Heartbeat 调度策略
 
 Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系统行为。
 
-### 7.1 H0：每次任务结束
+##### H0：每次任务结束
 
 - **触发**：每次 Agent 完成任务
 - **动作**：
@@ -400,7 +382,7 @@ Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系�
   - 必要时记录 incident/case
   - 更新 usage count
 
-### 7.2 H1：每日轻量巡检
+##### H1：每日轻量巡检
 
 - **触发**：每天一次，或每 20 次 skill 使用
 - **动作**：
@@ -410,7 +392,7 @@ Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系�
   - 更新 meta/metrics.md
   - 不做大规模修改
 
-### 7.3 H2：每周维护
+##### H2：每周维护
 
 - **触发**：每周一次，或某 skill 累计 3 条相似 incident
 - **动作**：
@@ -420,7 +402,7 @@ Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系�
   - 更新 changelog
   - 更新 eval
 
-### 7.4 H3：每月治理
+##### H3：每月治理
 
 - **触发**：每月一次，或 skill 数量超过阈值
 - **动作**：
@@ -431,7 +413,7 @@ Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系�
   - 检查安全风险
   - 整理 design_notes
 
-### 7.5 H4：MetaSkill 进化
+##### H4：MetaSkill 进化
 
 - **触发**：多 Agent 工作流反复失败，或复杂任务需要自动编排
 - **动作**：
@@ -442,9 +424,7 @@ Heartbeat 是 ASMP 的关键，因为它让维护从"偶尔想起来"变成系�
 
 H4 对应 Skill-MAS 的愿景：不只维护具体 task skill，还维护"如何构造多 Agent 系统"的高阶能力。
 
----
-
-## 8. 维护阈值和动量机制
+#### 维护阈值和动量机制
 
 不要每次 incident 都立刻改 skill。
 
@@ -468,9 +448,7 @@ H4 对应 Skill-MAS 的愿景：不只维护具体 task skill，还维护"如何
 - 明显错误 API / 路径
 - 安全边界失效
 
----
-
-## 9. Patch 决策表
+#### Patch 决策表
 
 维护 Agent 不应该把所有经验都写进入口文件。
 
@@ -488,9 +466,7 @@ H4 对应 Skill-MAS 的愿景：不只维护具体 task skill，还维护"如何
 | 与其他 skill 边界冲突 | meta/shadowing.md + skill 库治理 |
 | 多 Agent 编排失败 | meta-architect 或 orchestration-skill |
 
----
-
-## 10. 有界编辑规则
+#### 有界编辑规则
 
 每次维护必须限制修改范围。
 
@@ -536,13 +512,11 @@ Patch 格式：
 - Rollback note:
 ```
 
----
-
-## 11. 验证门控
+#### 验证门控
 
 每个 patch 通过验证后才能落地。
 
-### 11.1 结构验证
+##### 结构验证
 
 - 入口文件是否存在
 - Trigger 是否存在
@@ -551,7 +525,7 @@ Patch 格式：
 - 有 scripts/ 时是否说明输入输出副作用
 - changelog 是否更新
 
-### 11.2 冷上下文验证
+##### 冷上下文验证
 
 用一个干净子 Agent 只读取：
 
@@ -567,7 +541,7 @@ Patch 格式：
 
 检查它能不能正确执行样例任务。
 
-### 11.3 回归验证
+##### 回归验证
 
 从 `meta/eval.md` 选 3 到 10 个测试：
 
@@ -585,7 +559,7 @@ Patch 格式：
 
 这对应 SkillGen 的思想：skill 是一种 intervention，不能只看 repair，也要看 regression。
 
-### 11.4 Shadowing 验证
+##### Shadowing 验证
 
 对相邻 skill 做触发测试：
 
@@ -596,7 +570,7 @@ Patch 格式：
 
 如果新增规则让通用 skill 压制专用 skill，patch 拒绝或进入 backlog。
 
-### 11.5 安全验证
+##### 安全验证
 
 检查：
 
@@ -614,15 +588,13 @@ Patch 格式：
 - 高风险修改必须用户确认
 - 第三方 skill 默认只读或沙箱运行
 
----
-
-## 12. 子 Agent 角色设计
+#### 子 Agent 角色设计
 
 ASMP 最小实现只需要一个 Maintenance Agent。
 
 但推荐角色如下：
 
-### 12.1 Execution Agent
+##### Execution Agent
 
 **职责：**
 
@@ -638,7 +610,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 - 把临时经验塞进入口文件
 - 无证据扩大 trigger
 
-### 12.2 Skill Maintainer Agent
+##### Skill Maintainer Agent
 
 **职责：**
 
@@ -656,7 +628,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 - 修改内置 skill
 - 隐藏失败维护
 
-### 12.3 Evaluator Agent
+##### Evaluator Agent
 
 **职责：**
 
@@ -667,7 +639,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 
 最好不要把答案、oracle、敏感测试目标直接暴露给 Maintainer。
 
-### 12.4 Librarian Agent
+##### Librarian Agent
 
 **职责：**
 
@@ -677,7 +649,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 - 建议合并、拆分、废弃 skill
 - 维护 skill dependency graph
 
-### 12.5 Security Agent
+##### Security Agent
 
 **职责：**
 
@@ -687,7 +659,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 - 检查供应链风险
 - 检查第三方 skill
 
-### 12.6 Meta-Architect Agent
+##### Meta-Architect Agent
 
 **职责：**
 
@@ -698,9 +670,7 @@ ASMP 最小实现只需要一个 Maintenance Agent。
 
 这对应 Skill-MAS 的 MetaSkill 层：维护"如何搭 Agent 团队"的能力，而不只是维护单个执行 skill。
 
----
-
-## 13. "skill-maintainer" 设计
+#### "skill-maintainer" 设计
 
 "skill-maintainer" 是 ASMP 的核心 skill。
 
@@ -777,13 +747,11 @@ If maintenance is uncertain or fails:
 4. Ask for user confirmation when risk is high.
 ```
 
----
-
-## 14. Library 级治理
+#### Library 级治理
 
 当 skill 数量超过 20 个，ASMP 必须进入 skill 库治理阶段。
 
-### 14.1 Skill Index
+##### Skill Index
 
 维护一个全局索引：
 
@@ -804,17 +772,17 @@ skills:
     last_maintained: 2026-06-30
 ```
 
-### 14.2 Shadowing 检查
+##### Shadowing 检查
 
 检查：
 
-- 是否有多个 skill 的 description 太像
+- 是否有多余 skill 的 description 太像
 - 是否通用 skill 抢走专用 skill
 - 是否旧 skill 抢走新 skill
 - 是否某 skill trigger 过宽
 - 是否某 skill trigger 过窄导致长期不触发
 
-### 14.3 合并、拆分、废弃
+##### 合并、拆分、废弃
 
 **合并条件：**
 
@@ -843,13 +811,11 @@ status: deprecated
 replacement: <new-skill>
 ```
 
----
-
-## 15. MetaSkill 层：把"维护能力"和"编排能力"也变成 skill
+#### MetaSkill 层：把"维护能力"和"编排能力"也变成 skill
 
 ASMP 不只维护普通 skill，还维护两种高阶 skill。
 
-### 15.1 Maintenance MetaSkill
+##### Maintenance MetaSkill
 
 也就是 "skill-maintainer"。
 
@@ -862,7 +828,7 @@ ASMP 不只维护普通 skill，还维护两种高阶 skill。
 - 如何验证
 - 如何更新 changelog
 
-### 15.2 Orchestration MetaSkill
+##### Orchestration MetaSkill
 
 也就是 "meta-architect" 或 "workflow-architect"。
 
@@ -904,20 +870,20 @@ meta-architect/
 
 这就是把 Skill-MAS 的愿景落到工程框架中：高阶编排经验也可以被维护、评估和演化。
 
----
+### 实现方案
 
-## 16. 自动化等级
+#### 自动化等级
 
 ASMP 建议把自动化分级，避免一上来就全自动乱改。
 
-### L0：只记录
+##### L0：只记录
 
 - 记录 skill 使用、incident、case
 - 不自动维护
 
 适合刚接入系统。
 
-### L1：自动 triage
+##### L1：自动 triage
 
 - Heartbeat 自动聚类 incident
 - 生成维护建议
@@ -925,14 +891,14 @@ ASMP 建议把自动化分级，避免一上来就全自动乱改。
 
 适合大多数团队默认开启。
 
-### L2：自动生成 patch proposal
+##### L2：自动生成 patch proposal
 
 - skill-maintainer 自动生成 diff
 - 等待用户确认
 
 推荐默认级别。
 
-### L3：低风险自动 patch
+##### L3：低风险自动 patch
 
 - 错别字
 - 路径修正
@@ -942,7 +908,7 @@ ASMP 建议把自动化分级，避免一上来就全自动乱改。
 
 可以自动改，但必须写 changelog。
 
-### L4：验证门控自动优化
+##### L4：验证门控自动优化
 
 - 有明确 eval
 - 有冷上下文测试
@@ -951,7 +917,7 @@ ASMP 建议把自动化分级，避免一上来就全自动乱改。
 
 适合工程成熟 skill。
 
-### L5：MetaSkill 自进化
+##### L5：MetaSkill 自进化
 
 - 自动优化 skill-maintainer
 - 自动优化 meta-architect
@@ -968,20 +934,18 @@ ASMP 建议把自动化分级，避免一上来就全自动乱改。
 | 有 eval 的稳定系统 | L3-L4 |
 | 研究系统 | L4-L5 |
 
----
-
-## 17. 安全边界
+#### 安全边界
 
 ASMP 必须默认保守。
 
-### 17.1 写权限隔离
+##### 写权限隔离
 
 - **Execution Agent**：可写 meta/incidents、meta/cases、metrics；不可写 entry/reference/scripts
 - **Maintenance Agent**：可提出 patch；可在 gate 通过后写 entry/reference/scripts；必须写 changelog
 - **Evaluator Agent**：可读 candidate skill；可写 eval report；不直接改 skill
 - **Security Agent**：可阻止 patch；可标记 risk
 
-### 17.2 内置 skill 保护
+##### 内置 skill 保护
 
 默认：
 
@@ -991,7 +955,7 @@ ASMP 必须默认保守。
 
 除非用户明确要求。
 
-### 17.3 危险操作 gate
+##### 危险操作 gate
 
 这些修改必须用户确认：
 
@@ -1003,7 +967,7 @@ ASMP 必须默认保守。
 - 修改安全相关 skill
 - 修改 skill router 规则
 
-### 17.4 防 prompt injection
+##### 防 prompt injection
 
 第三方 skill、reference、incident 原文都可能带恶意指令。
 
@@ -1014,9 +978,7 @@ ASMP 必须默认保守。
 - 第三方 skill 默认低信任
 - 维护 agent 需要区分"用户纠正"和"外部文本诱导"
 
----
-
-## 18. 框架适配层
+#### 框架适配层
 
 任何框架接入 ASMP 时，只需实现 6 个适配点：
 
@@ -1045,9 +1007,7 @@ interface ASMPRuntime {
 
 只要框架能实现这几个适配点，就能接入。
 
----
-
-## 19. 最小可行版本 MVP
+#### 最小可行版本 MVP
 
 如果只想最小落地，按这个顺序做。
 
@@ -1059,9 +1019,7 @@ interface ASMPRuntime {
 6. **加 eval** — 先给高频 skill 加 3 个测试：一个正例、一个反例、一个过去失败案例
 7. **加 shadowing 审计** — skill 超过 20 个后启动
 
----
-
-## 20. 完整运行示例
+#### 完整运行示例
 
 **用户任务：** 帮我修 Unity URP Shader 的编译错误
 
@@ -1095,9 +1053,7 @@ interface ASMPRuntime {
 - 相同错误进入 eval
 - changelog 解释了为什么改
 
----
-
-## 21. 成熟度检查清单
+#### 成熟度检查清单
 
 一个 Agent 框架如果声称支持 ASMP，至少应满足：
 
@@ -1116,9 +1072,7 @@ interface ASMPRuntime {
 - [ ] 有安全边界
 - [ ] 有 MetaSkill / orchestration skill 的扩展点
 
----
-
-## 22. 结论
+### 总结
 
 ASMP 的核心不是"让 Agent 自动改文件"，而是让 Agent 具备一套长期可靠的自维护闭环：
 
@@ -1138,13 +1092,21 @@ ASMP 的核心不是"让 Agent 自动改文件"，而是让 Agent 具备一套�
 
 这就是一个足够通用、足够稳健、也能承接 MetaSkill 愿景的 Agent 自维护方案。
 
----
+### 知识缺口
 
-## 知识缺口
 - 各主流 Agent 框架（LangGraph、AutoGen、CrewAI 等）的实际 Skill 系统实现细节与 ASMP 适配难度评估
 - 大规模 Skill 库（100+）下的 Shadowing 检测算法效率
 - Heartbeat 在不同框架中的具体接入方式和性能开销
 - 冷上下文验证的自动化程度上限——多复杂的 skill 能完全自动验证
+
+## 元数据
+
+- **创建时间：** 2026-06-30
+- **最后更新：** 2026-06-30
+- **作者：** 吉良吉影
+- **分类：** Agent工程化
+- **标签：** Agent, Skill, 自维护, 协议规范, ASMP, Heartbeat, 子Agent, Skill维护
+- **来源：** 基于 Agent 自维护实践经验总结形成的正式协议规范
 
 ---
 *由吉良吉影的agent整理*
