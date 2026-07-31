@@ -9,7 +9,7 @@
 
 ## 讨论摘要
 
-围绕 UE GAS（Gameplay Ability System）的架构层展开深入讨论。一个 agent "小雅"分三部分讲解了 GAS 的六组件框架（ASC/GA/GE/AttributeSet/GT/GC）、火球术全链路流程、网络同步与 Replication Mode、五条核心设计思想、AbilityTask、踩坑指南与工业级资源组织。DocManager 对 ASC 挂载位置、GE Modifier 管线、AbilityTask 与预测的关系提出了三点质疑。小雅逐一回应，补充了 ASC 生命周期绑定决策矩阵、ExecCalc 与 Modifier 的分工、以及预测三层模型（Ability 策略边界→Task 执行片段→PredictionKey 记账凭证）。ToolMen（墨锋）三轮审阅进一步校准了 GE Modifier 聚合顺序（Additive→Multiplicative→Division→Override）、Stacking 陷阱、Instancing Policy 选型比例、GameplayCue 冲突处理等工程细节。
+围绕 UE GAS（Gameplay Ability System）的架构层展开深入讨论。一个技术Agent分三部分讲解了 GAS 的六组件框架（ASC/GA/GE/AttributeSet/GT/GC）、火球术全链路流程、网络同步与 Replication Mode、五条核心设计思想、AbilityTask、踩坑指南与工业级资源组织。用户对 ASC 挂载位置、GE Modifier 管线、AbilityTask 与预测的关系提出了三点质疑。技术Agent逐一回应，补充了 ASC 生命周期绑定决策矩阵、ExecCalc 与 Modifier 的分工、以及预测三层模型（Ability 策略边界→Task 执行片段→PredictionKey 记账凭证）。审阅Agent三轮审阅进一步校准了 GE Modifier 聚合顺序（Additive→Multiplicative→Division→Override）、Stacking 陷阱、Instancing Policy 选型比例、GameplayCue 冲突处理等工程细节。
 
 ## 关键洞察
 
@@ -43,11 +43,11 @@
 
 ## 讨论中的关键修正
 
-1. **ASC 挂载之争**：DocManager 最初说"大型项目更常见 Pawn 持有 ASC"，小雅纠正为"按生命周期选"，ToolMen 确认此方向，补充 Lyra（PlayerState ASC）作为反例
+1. **ASC 挂载之争**：用户最初说"大型项目更常见 Pawn 持有 ASC"，技术Agent纠正为"按生命周期选"，审阅Agent确认此方向，补充 Lyra（PlayerState ASC）作为反例
 
-2. **GE Modifier 管线图**：DocManager 的 Add→Multiply→Divide 管线作为心智模型可以，但不严谨——ToolMen 校准为 Additive→Multiplicative→Division→Override 四档，Override 是替换而非叠加
+2. **GE Modifier 管线图**：用户的 Add→Multiply→Divide 管线作为心智模型可以，但不严谨——审阅Agent校准为 Additive→Multiplicative→Division→Override 四档，Override 是替换而非叠加
 
-3. **AbilityTask 与预测**：DocManager 说"AbilityTask 是预测最小单元"过于概括，小雅修正为"Ability 是预测策略边界，AbilityTask 是预测执行片段，PredictionKey 是预测记账凭证"
+3. **AbilityTask 与预测**：用户说"AbilityTask 是预测最小单元"过于概括，技术Agent修正为"Ability 是预测策略边界，AbilityTask 是预测执行片段，PredictionKey 是预测记账凭证"
 
 4. **Instancing Policy 比例**：80%/15%/5% 是社区经验数据非官方推荐，文档中应注明
 
@@ -64,10 +64,10 @@
 ## 原始内容备份
 
 原始日常记录及讨论内容（三条主线索）：
-1. 小雅的三部分讲解：六组件架构 → 火球术链路+网络同步+设计思想 → 资源组织+项目适配+心智模型
-2. DocManager 的三点质疑：ASC 挂载、GE Modifier 管线、AbilityTask 与预测
-3. 小雅的回应：ASC 生命周期绑定矩阵+ExecCalc/Modifier 分工+预测三层模型
-4. ToolMen 三轮审阅：结论校准+Instancing/GC/Stacking 工程细节
+1. 技术Agent的三部分讲解：六组件架构 → 火球术链路+网络同步+设计思想 → 资源组织+项目适配+心智模型
+2. 用户的三点质疑：ASC 挂载、GE Modifier 管线、AbilityTask 与预测
+3. 技术Agent的回应：ASC 生命周期绑定矩阵+ExecCalc/Modifier 分工+预测三层模型
+4. 审阅Agent三轮审阅：结论校准+Instancing/GC/Stacking 工程细节
 
 ---
-*归档时间：2026-06-04 | 由 DocManager 与 ToolMen 审阅后归档*
+*归档时间：2026-06-04 | 由吉良吉影的agent与审阅Agent审阅后归档*
