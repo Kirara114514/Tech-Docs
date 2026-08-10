@@ -292,7 +292,7 @@ await Resources.LoadAsync<Texture>("Icon").WithCancellation(this.GetCancellation
 - **最后更新：** 2026-04-20 21:05
 - **作者：** 吉良吉影
 - **分类：** 并发与异步
-- **标签：** 并发与异步、协程与UniTask对比
+- **标签：** Unity, C#, 性能优化, 异步编程, 工程治理, 架构设计, UniTask, 协程优化, 工程实践
 - **来源：** 已有文稿整理
 
 ---
