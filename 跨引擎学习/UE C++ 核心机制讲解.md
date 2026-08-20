@@ -1,8 +1,8 @@
-# UE C++ 八股概览
+# UE C++ 核心机制讲解
 
 ## 摘要
 
-在 Unreal Engine（UE）客户端开发岗位的面试中，UE C++ 八股不是孤立的题目清单，而是一条可以被逐层追问的技术链：UObject 与反射 → UHT 代码生成 → CDO → GC → UObject 指针体系 → 对象生命周期 → Actor/Component → Gameplay Framework → 资源引用与加载 → Delegate → Tick → 多线程 → 网络同步 → UBT/UHT 模块体系 → C++ 语言基础 → 性能优化。这条链的每一环都同时涉及 C++ 语言本身的语义与 UE 引擎的运行时机制，回答质量直接反映候选人是否真正用 UE C++ 写过游戏逻辑，而不只是背过 API。
+在 Unreal Engine（UE）客户端开发岗位的面试中，UE C++ 的核心知识不是孤立的题目清单，而是一条可以被逐层追问的技术链：UObject 与反射 → UHT 代码生成 → CDO → GC → UObject 指针体系 → 对象生命周期 → Actor/Component → Gameplay Framework → 资源引用与加载 → Delegate → Tick → 多线程 → 网络同步 → UBT/UHT 模块体系 → C++ 语言基础 → 性能优化。这条链的每一环都同时涉及 C++ 语言本身的语义与 UE 引擎的运行时机制，回答质量直接反映候选人是否真正用 UE C++ 写过游戏逻辑，而不只是背过 API。
 
 本文按面试出现频率从高到低，将全部知识点组织为十四个梯队：前三梯队覆盖必须吃透的 UObject/反射/UHT/CDO/GC/指针体系与对象生命周期；中间梯队深入 Gameplay Framework、容器字符串、Delegate/Timer/Tick、多线程与渲染线程；后段覆盖资源加载、网络、UBT 模块、C++ 语言基础、序列化配置、性能优化与架构选择，最后以面试实战连环追问与整套知识地图收尾。文末附知识缺口清单，适合作为面试前系统复习与查漏补缺的索引。全部代码示例基于 Unreal Engine 5 的现代用法；文中对 TObjectPtr 取代裸 UObject* 成员、增量 GC、Replication Graph/Iris 等 UE5 新变化做了专门说明。
 
@@ -19,7 +19,7 @@
 阅读本文前需要明确几个背景前提：
 
 - **版本口径：** 默认讨论 Unreal Engine 5 的当前体系。一个特别值得注意的新变化是：官方已明确推荐 UObject 成员引用尽可能使用 `TObjectPtr<T>`，很多早期 UE4 教程里"`UPROPERTY() UObject*` 就完事"的说法已经过时。
-- **面试定位：** 本文是八股清单，不是官方文档。每个知识点给出"标准回答思路 + 机制解释 + 高频陷阱"，用于帮助组织语言，而不是替代对源码和官方文档的阅读。
+- **面试定位：** 本文是面试复习清单，不是官方文档。每个知识点给出"标准回答思路 + 机制解释 + 高频陷阱"，用于帮助组织语言，而不是替代对源码和官方文档的阅读。
 - **术语约定：** UE 指 Unreal Engine；UCLASS/UPROPERTY/UFUNCTION/USTRUCT/UENUM 是 UE 的反射宏；UObject 是 UE 所有运行时对象的基类；GC 指垃圾回收（Garbage Collection）；UHT 指 Unreal Header Tool（UE 头文件工具）；UBT 指 Unreal Build Tool（UE 构建工具）。
 
 ### 核心内容
@@ -1127,7 +1127,7 @@ void MulticastPlayImpact(FVector Location);
 
 ##### 60. UObject 能不能 Replicate？
 
-老八股经常说"只有 Actor 能 Replicate"，这个回答现在不够准确。准确说：**Actor 是 UE 网络复制的主要主体；普通 UObject 可以作为 replicated subobject 跟随 Actor/Component 复制**。当前官方也明确支持 registered subobjects list，并指出这个方式与 Iris 兼容。这在 Inventory Item Instance、Ability object、Equipment instance 类系统里很有用。
+常见的旧说法是"只有 Actor 能 Replicate"，这个回答现在不够准确。准确说：**Actor 是 UE 网络复制的主要主体；普通 UObject 可以作为 replicated subobject 跟随 Actor/Component 复制**。当前官方也明确支持 registered subobjects list，并指出这个方式与 Iris 兼容。这在 Inventory Item Instance、Ability object、Equipment instance 类系统里很有用。
 
 #### 第十梯队：UBT、UHT 与模块工程
 
@@ -1212,7 +1212,7 @@ UE 的 Live Coding（热编译）允许在编辑器运行时修改 C++ 并即时
 
 #### 第十一梯队：C++ 基础
 
-##### 66. C++ 本体八股：UE 岗一定会问的部分
+##### 66. C++ 语言基础：UE 岗一定会问的部分
 
 不能因为做 UE 就不会 C++。最值得重点掌握：对象生命周期、RAII、virtual、多态、copy/move、左值右值、模板、内存布局、alignment、smart pointer、lambda、const、线程、容器、cache。
 
@@ -1717,7 +1717,7 @@ UE C++
              Performance / Scale
 ```
 
-真正到了比较成熟的阶段，你会发现：UE 八股不是一堆知识点，而是一整套"对象、数据、生命周期和执行线程怎么在一个大型实时引擎里协作"的答案。
+真正到了比较成熟的阶段，你会发现：这些知识不是一堆孤立知识点，而是一整套"对象、数据、生命周期和执行线程怎么在一个大型实时引擎里协作"的答案。
 
 ##### 101. 七个最值得优先攻克的专题
 
@@ -1735,11 +1735,11 @@ UE C++
 
 ### 总结
 
-UE C++ 八股的本质，是一套"**对象、数据、生命周期和执行线程如何协作**"的答案。从 UObject 与反射的地基出发，UHT 让类型信息可以被引擎发现；CDO 让默认值有单一权威；GC 用可达性而非引用计数管理内存，于是产生了 TObjectPtr/TWeakObjectPtr/TSoftObjectPtr 这一整套指针语义；Actor/Component 与 Gameplay Framework 回答"代码放哪、状态归谁"；Delegate/Timer/Tick 回答"何时执行"；多线程与渲染线程回答"在哪里执行"；资源引用与网络复制回答"数据如何流动"；UBT/UHT 与 C++ 语言基础回答"工程如何构建"；性能优化与架构选择则把前面的所有机制变成工程判断。
+UE C++ 知识体系的本质，是一套"**对象、数据、生命周期和执行线程如何协作**"的答案。从 UObject 与反射的地基出发，UHT 让类型信息可以被引擎发现；CDO 让默认值有单一权威；GC 用可达性而非引用计数管理内存，于是产生了 TObjectPtr/TWeakObjectPtr/TSoftObjectPtr 这一整套指针语义；Actor/Component 与 Gameplay Framework 回答"代码放哪、状态归谁"；Delegate/Timer/Tick 回答"何时执行"；多线程与渲染线程回答"在哪里执行"；资源引用与网络复制回答"数据如何流动"；UBT/UHT 与 C++ 语言基础回答"工程如何构建"；性能优化与架构选择则把前面的所有机制变成工程判断。
 
 回答这类问题的关键在于一个思维转换：**不要把 UE C++ 当"带宏的 C++"，而要把自己当成"一个大型实时引擎的对象系统工程师"。** 面试官想听到的，不是你会背多少 API，而是你能不能讲清机制层为什么——为什么构造函数不能依赖 World、为什么裸指针成员要换成 TObjectPtr、为什么 Reliable 不等于更好、为什么对象池不是万能、为什么先 Profile 再优化。这些机制互相咬合，追一问往往能串起半张地图。
 
-八股只是入口，源码和官方文档才是权威。如果某个问题在面试现场答不上来，最诚实的策略是承认边界，并展示自己知道去哪里查——这比硬编一个答案更能说明工程素养。
+面试题只是入口，源码和官方文档才是权威。如果某个问题在面试现场答不上来，最诚实的策略是承认边界，并展示自己知道去哪里查——这比硬编一个答案更能说明工程素养。
 
 ### 知识缺口
 
