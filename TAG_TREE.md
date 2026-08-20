@@ -23,6 +23,7 @@ Unity、Unreal Engine 引擎相关
   - GameplayAbility
   - 网络同步
   - 行为树
+  - UnLua
 
 ### 编程范式
 响应式编程、MVVM、ECS 等编程范式与设计模式
@@ -154,7 +155,7 @@ AI 编程、Agent 系统
   - 工程实践
   - 权限分级
   - 评测体系
-- **引擎迁移** ← 领域入口
+- **跨引擎学习** ← 领域入口
   - NPC迁移
   - Unity转UE
   - 渲染迁移

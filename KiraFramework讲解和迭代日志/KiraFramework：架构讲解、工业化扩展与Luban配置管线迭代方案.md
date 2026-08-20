@@ -1148,7 +1148,7 @@ KiraFramework 当前已经完成的事情，可以用一句话概括：它把 Un
 - **最后更新：** 2026-05-29 00:00
 - **作者：** 吉良吉影
 - **分类：** KiraFramework讲解和迭代日志
-- **标签：** Unity, Unreal Engine, C#, 工程治理, 响应式编程, 架构设计, 热更新, UGUI, ScriptableObject, 资源管理, UI架构, 工程化, 代码生成, 事件, MVVM, 引擎迁移, 工程实践
+- **标签：** Unity, Unreal Engine, C#, 工程治理, 响应式编程, 架构设计, 热更新, UGUI, ScriptableObject, 资源管理, UI架构, 工程化, 代码生成, 事件, MVVM, 跨引擎学习, 工程实践
 - **来源：** 基于 KiraFramework-Analysis 项目 README、源码结构、现有架构讲解文档和 Luban 配置管线迭代主题重新整理，重写重点为先解释项目做了什么和为什么这样做，再展开后续工业化迭代方案。
 
 ---
